@@ -78,23 +78,23 @@ DeepSeek Harness.exe            ← Electron 主进程：窗口、托盘、更�
 
 ## 安装
 
-```powershell
-# 1) 确认插件目录
-Test-Path C:\work\my\dsh\plugins\dsh-restart-desktop\index.js
+**本机已经装好了**（`link:` 方式，装进 `desktop` profile）：
 
-# 2) 安装（link 方式：改代码即生效，不需要重新打包）
+```powershell
 plugin_manager(action: "install_bundle", target: "link:C:\work\my\dsh\plugins\dsh-restart-desktop")
 ```
 
-或用 DSH 的插件页 / `~/.dsh/profiles/desktop/package.json` 手工加：
+安装后 DSH 的 HMR 会当场把两半挂上，**不需要重启**（实测：安装后宿主路由立即应答、三个座位立即被占用）。如果入口没出现，刷新一次页面即可。
+
+在别的机器上装：
 
 ```jsonc
-// package.json
+// ~/.dsh/profiles/desktop/package.json
 "dsh": { "profile": { "bundles": [ /* … */ "dsh-restart-desktop" ] } },
 "dependencies": { "dsh-restart-desktop": "link:C:/work/my/dsh/plugins/dsh-restart-desktop" }
 ```
 
-宿主半在 **DSH 下次启动时**加载；客户端半每次刷新页面重新取。两半版本不一致时，设置页里会显示宿主版本。
+正常情况下 HMR 会当场把两半挂上，不必重启。只有在没开 HMR 的组合里，宿主半才要等 **DSH 下次启动**；客户端半每次刷新页面重新取。两半版本不一致时，设置页里会显示宿主版本。
 
 ---
 
@@ -151,6 +151,7 @@ __DSH_RESTART_DESKTOP__.entries()     // 三个入口的开关
 | 宿主挂载与路由 | 假 ctx 真 `apply` 一遍，按真实 HTTP 形状调路由：状态契约、403 / 404 / 409 / 500、设置写入、守卫先拦、`force=1` 才交接 |
 | **端到端** | 临时编译一个 WinForms 靶子程序当「应用」，跑完 `lib/helper.mjs` 全链路：捕获几何（700×500 @ 300,200）→ 结束靶子主进程（确认日志里是 `/T` 之外的方式）→ 拉起新实例（靶子第二次启动刻意用默认几何 320×220 @ 20,20）→ **独立复核**新窗口实际几何逐像素等于重启前 |
 | helper 启动方式 | 用真正的 `DeepSeek Harness.exe` + `ELECTRON_RUN_AS_NODE=1` + `detached` 跑一次最小脚本，证明这条启动路径确实能跑起来 |
+| **安装后的活体验证** | 插件安装到 `desktop` profile 后，DSH 的 HMR 当场把两半都挂上了（无需重启）：<br>• 宿主半路由 `GET /dsh-restart-desktop/api/status` 实测返回 `{"host":"dsh-restart-desktop","version":"0.1.0","desktop":true,...}`，守卫正确读到真实服务（`有任务在跑（4 项正在生成或运行工具、1 个后台任务在跑）`，12 个在挂会话）；<br>• 客户端半三个官方座位实测已被占用：`sidebar.footer.action`（order 100）、`settings.section`（order 90）、`settings.general.item`（order 91），均为 `active: true`。<br>（账号浮窗那一项只在菜单打开时存在于 DOM 里，请打开一次账号菜单确认；控制台 `__DSH_RESTART_DESKTOP__.bridge()` 会给出 `injected` 计数。） |
 
 **没有跑过的**（诚实说明）：没有真正重启过正在运行的 DSH —— 一跑就会杀掉当前会话。生产路径的每一段都被单独验证过，但「在本机完整重启一次 DSH」留给你第一次点按钮时完成。
 
