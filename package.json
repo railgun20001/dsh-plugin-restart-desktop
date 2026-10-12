@@ -1,0 +1,52 @@
+{
+  "name": "dsh-restart-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH 桌面版一键重启：保留窗口位置/大小/最大化状态，可选在重启后自动续上被打断的那一轮对话",
+  "meta": {
+    "title": "重启桌面版（保窗口 · 续对话）",
+    "description": "宿主半排程一次分离重启（只结束 Electron 主进程，让 host 优雅落盘），helper 在端口释放后拉起新实例并用 Win32 逐像素还原窗口几何；可选把触发重启的那个会话恢复成活 Agent 并注入一条恢复消息。"
+  },
+  "main": "index.js",
+  "exports": {
+    ".": {
+      "default": "./index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "src",
+    "build",
+    "test",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node build/bundle.mjs",
+    "test": "node --test test/client-core-test.mjs test/menu-bridge-test.mjs test/client-bundle-test.mjs test/host-core-test.mjs test/host-routes-test.mjs test/resume-test.mjs",
+    "test:e2e": "node --test test/helper-e2e.mjs",
+    "check": "node build/bundle.mjs --check && npm test"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    },
+    "manifestVersion": 1
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

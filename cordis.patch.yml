@@ -1,0 +1,12 @@
+# dsh-restart-desktop —— bundle patch
+#
+# 一行同时挂起两半：
+#   - 宿主半（index.js）：重启路由 + 任务守卫 + 交接 helper + 启动后自动续接会话；
+#   - 客户端半（lib/client.js，由 package.json 的 exports["./client"] 指到）：
+#     账号浮窗 / 侧栏底部 / 设置页三个入口，以及插件自己的设置分区。
+#
+# 客户端半的模块图顺序由 package.json 的 dsh.client.inject 声明（那里写包名），
+# 这里不需要重复。
+- insert:
+    - id: restart-desktop
+      name: dsh-restart-desktop
