@@ -21,7 +21,7 @@
  *
  * 本插件的宿主半只做四件事，其余交给分离的 helper（见 lib/helper.mjs）：
  * 校验目标是不是桌面宿主、把「会打断什么」讲清楚、写一份交接描述并把 helper 拉起来、
- * 以及在下次启动时把被打断的那一轮对话接上（见 lib/resume.mjs）。
+ * 以及在下次启动时把重启那一刻真正在跑的那些会话接上（见 lib/resume.mjs）。
  *
  * ## 关键取舍：只杀主进程，不带 /T
  *
@@ -44,7 +44,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { inspectMarker, runResume } from './lib/resume.mjs'
+import { inspectMarker, markerSessionIds, runResume } from './lib/resume.mjs'
 
 /** 插件标识：路由前缀、日志名、客户端 id 共用。 */
 export const PLUGIN_ID = 'dsh-restart-desktop'
@@ -377,6 +377,53 @@ export function taskSnapshot(ctx) {
 }
 
 /**
+ * 重启排程这一刻「真的在跑的会话」。
+ *
+ * 这是自动恢复的判据来源，也是本插件最容易搞错的一处：早先只认客户端交上来的
+ * `sessionId`（也就是「当前打开的那个会话」），于是「在一个会话里挂着长任务、切到
+ * 另一个会话点重启」会把后台那个真正被打断的会话整个漏掉。这里改成问宿主自己的实况：
+ *
+ *   - agent 状态是 `running`（正在生成或跑工具）；
+ *   - 收件箱里有排队消息（重启会把它们一起吞掉）；
+ *   - 有正在跑 / 正在停的后台任务（应用关闭时它们会被杀，任务本身也就断了）。
+ *
+ * 服务缺失、形状不认识、抛错一律返回空数组：宁可一条都不恢复，也绝不凭猜测唤醒会话
+ * （自动恢复会真的花钱、真的跑模型）。顺序固定，便于日志与单测比对。
+ * @param {{ get?: (name: string) => unknown }} ctx host 上下文。
+ * @returns {{ id: string, running: boolean, queued: number, jobs: number }[]} 会话清单。
+ */
+export function interruptedSessions(ctx) {
+  try {
+    const agents = typeof ctx?.get === 'function' ? ctx.get('agents') : undefined
+    if (agents === undefined || typeof agents.list !== 'function') return []
+    const live = agents.list()
+    if (!Array.isArray(live)) return []
+    const jobs = typeof ctx?.get === 'function' ? ctx.get('jobs') : undefined
+    const found = []
+    for (const agent of live) {
+      const id = agent?.id
+      if (typeof id !== 'string' || id === '') continue
+      const running = agent?.status === 'running'
+      const nextTurn = Array.isArray(agent?.inbox?.nextTurn) ? agent.inbox.nextTurn.length : 0
+      const nextStep = Array.isArray(agent?.inbox?.nextStep) ? agent.inbox.nextStep.length : 0
+      let runningJobs = 0
+      // 后台任务挂在会话上（`jobs.list(agentId)`）；查不到就按 0 算，不因此把运行中的 agent 漏掉。
+      if (jobs !== undefined && typeof jobs.list === 'function') {
+        const list = jobs.list(id)
+        if (Array.isArray(list)) {
+          for (const job of list) if (job?.status === 'running' || job?.status === 'stopping') runningJobs += 1
+        }
+      }
+      if (!running && nextTurn === 0 && nextStep === 0 && runningJobs === 0) continue
+      found.push({ id, running, queued: nextTurn + nextStep, jobs: runningJobs })
+    }
+    return found.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+  } catch {
+    return []
+  }
+}
+
+/**
  * 把「会打断什么」写成一句人话。
  * @param {ReturnType<typeof taskSnapshot>} tasks 任务快照。
  * @param {ReturnType<typeof installInProgress>} installs 安装状态。
@@ -596,17 +643,25 @@ export function apply(ctx, config = {}) {
       }
       const verdict = inspectMarker(marker, Date.now())
       if (!verdict.usable) {
-        lastResume = { resumed: false, reason: verdict.reason, sessionId: marker?.sessionId ?? null, at: Date.now() }
+        const ids = markerSessionIds(marker)
+        lastResume = {
+          resumed: false,
+          reason: verdict.reason,
+          sessionId: typeof marker?.sessionId === 'string' ? marker.sessionId : ids[0] ?? null,
+          sessions: [],
+          at: Date.now(),
+        }
         writeJson(LAST_RESUME_FILE, lastResume)
         if (verdict.reason !== 'no-marker') log(`resume marker discarded: ${String(verdict.reason)}`)
         return
       }
       if (!options().resume) {
-        lastResume = { resumed: false, reason: 'disabled', sessionId: marker.sessionId, at: Date.now() }
+        lastResume = { resumed: false, reason: 'disabled', sessionId: marker.sessionId, sessions: [], at: Date.now() }
         writeJson(LAST_RESUME_FILE, lastResume)
         log('resume marker discarded: auto-resume is disabled in the plugin settings')
         return
       }
+      log(`resume marker armed with ${String(markerSessionIds(marker).length)} interrupted session(s)`)
       void runResume(buildResumeServices(ctx, log), marker)
         .then((result) => {
           lastResume = { ...result, at: Date.now() }
@@ -665,23 +720,30 @@ export function apply(ctx, config = {}) {
       }
     }
 
-    // 只有「触发重启的那个会话此刻确实在跑」才算被打断 —— 这是自动恢复的全部判据。
-    // 空闲会话被重启并没有损失任何工作，不该在重启后凭空多发一条消息。
-    let interrupted = false
+    // 「被打断」的判据是**宿主自己看到的实况**，不是「客户端当前打开的那个会话」：
+    // 在一个会话里挂着长任务、切到另一个会话点重启时，被打断的是后台那个。
+    // 客户端传来的 sessionId 只用来在它确实在跑、而 agents.list() 又没列到它时补一笔。
     let sessionId = null
-    if (typeof request.sessionId === 'string' && request.sessionId !== '') {
-      sessionId = request.sessionId
+    if (typeof request.sessionId === 'string' && request.sessionId !== '') sessionId = request.sessionId
+    const interrupted = current.resume ? interruptedSessions(ctx) : []
+    if (current.resume && sessionId !== null && !interrupted.some((entry) => entry.id === sessionId)) {
       try {
         const agent = typeof ctx.get === 'function' ? ctx.get('agents')?.get(sessionId) : undefined
-        interrupted = agent?.status === 'running'
+        if (agent?.status === 'running') {
+          interrupted.push({ id: sessionId, running: true, queued: 0, jobs: 0 })
+          interrupted.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+        }
       } catch {
-        interrupted = false
+        /* 服务形状不认识：只按宿主自己看到的实况 */
       }
     }
-    if (current.resume && sessionId !== null) {
+    if (current.resume) {
       writeJson(PENDING_FILE, {
-        sessionId,
-        interrupted,
+        // 名单是主判据；`sessionId` 留给旧读取方（以及状态路由里的单个会话展示）。
+        sessions: interrupted.map((entry) => entry.id),
+        details: interrupted,
+        interrupted: interrupted.length > 0,
+        sessionId: sessionId ?? interrupted[0]?.id ?? null,
         at: Date.now(),
         host: process.pid,
         requestedResume: request.resume !== false,
@@ -722,7 +784,8 @@ export function apply(ctx, config = {}) {
     const deadline = setTimeout(() => { scheduled = false }, HANDOFF_DEADLINE_MS)
     deadline.unref?.()
 
-    log(`restart scheduled: host pid ${String(result.hostPid)}, main pid ${String(result.mainPid)}, helper pid ${String(result.helperPid)}, resume=${String(interrupted)}`)
+    const armed = interrupted.map((entry) => entry.id)
+    log(`restart scheduled: host pid ${String(result.hostPid)}, main pid ${String(result.mainPid)}, helper pid ${String(result.helperPid)}, resume=${armed.length === 0 ? 'none' : armed.join(',')}`)
     return {
       status: 202,
       body: {
@@ -730,7 +793,12 @@ export function apply(ctx, config = {}) {
         hostPid: result.hostPid,
         mainPid: result.mainPid,
         geometry: current.geometry,
-        resume: { armed: current.resume && sessionId !== null, interrupted, sessionId },
+        resume: {
+          armed: current.resume && armed.length > 0,
+          interrupted: armed.length > 0,
+          sessions: armed,
+          sessionId: sessionId ?? armed[0] ?? null,
+        },
       },
     }
   }
@@ -787,6 +855,8 @@ export function apply(ctx, config = {}) {
             resumed: lastResume.resumed === true,
             reason: lastResume.reason ?? null,
             sessionId: lastResume.sessionId ?? null,
+            // 一次重启可能接上多个会话（后台任务被打断的情形），这里如实给出全部。
+            sessions: Array.isArray(lastResume.sessions) ? lastResume.sessions : [],
             at: lastResume.at ?? null,
           },
         })
@@ -862,6 +932,7 @@ export const __test = {
   resolveOptions,
   desktopTarget,
   taskSnapshot,
+  interruptedSessions,
   installInProgress,
   guardReasons,
   guardSnapshot,

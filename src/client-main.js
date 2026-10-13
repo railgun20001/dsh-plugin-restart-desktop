@@ -488,9 +488,12 @@ function apply(ctx) {
       ))
     }
     if (status?.resume) {
+      const resumedSessions = Array.isArray(status.resume.sessions) ? status.resume.sessions : []
       facts.push(fact(
         `上一次自动恢复：${status.resume.resumed === true
-          ? `已把会话 ${String(status.resume.sessionId ?? '')} 恢复并发出一条恢复消息`
+          ? resumedSessions.length > 1
+            ? `已恢复 ${String(resumedSessions.length)} 个被打断的会话（${resumedSessions.join('、')}）并各发出一条恢复消息`
+            : `已把会话 ${String(status.resume.sessionId ?? '')} 恢复并发出一条恢复消息`
           : `没有恢复（${String(status.resume.reason ?? '未知原因')}）`}`,
         status.resume.resumed === true ? 'ok' : undefined,
       ))
@@ -505,14 +508,14 @@ function apply(ctx) {
       React.createElement('h4', { className: 'dsrd-subtitle' }, '重启行为'),
       switchRow(
         '重启后还原窗口位置与大小',
-        '应用自己不记窗口几何（每次启动都回到 1280×820），所以由本插件在重启前后接管。关掉后重启会回到默认尺寸。',
+        '应用自己不记窗口几何（每次启动都回到 1280×820），所以由本插件在重启前后接管：位置、大小、最大化状态，以及它当时在哪块显示器上。关掉后重启会回到默认尺寸。',
         settings.geometry,
         (value) => void setHostSetting('geometry', value),
         !desktop,
       ),
       switchRow(
         '重启后自动续上被打断的那一轮对话',
-        '只处理「触发重启的那个会话」，而且只在重启排程那一刻它确实在跑时才发恢复消息；空闲会话不会被唤醒，历史会话更不会被扫到。',
+        '只接「重启排程那一刻真的在跑」的会话：正在生成或跑工具、有排队消息、或有后台任务在跑的那些，各发一条恢复消息。空闲会话不会被唤醒，历史会话更不会被扫到。',
         settings.resume,
         (value) => void setHostSetting('resume', value),
         !desktop,

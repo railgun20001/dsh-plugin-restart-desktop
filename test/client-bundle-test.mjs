@@ -188,7 +188,9 @@ test('诊断入口：暴露版本、入口开关与浮窗桥状态', () => {
   loaded.apply(fakeContext().ctx)
   const diagnostics = globalThis.__DSH_RESTART_DESKTOP__
   assert.notEqual(diagnostics, undefined, '应当暴露诊断入口')
-  assert.equal(diagnostics.version, '0.1.0')
+  // 版本从 package.json 读，跟着发版走 —— 免得每次改版本都要改测试。
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.equal(diagnostics.version, pkg.version)
   assert.deepEqual(diagnostics.entries(), { accountMenu: true, footer: true, settingsRow: true })
   const bridge = diagnostics.bridge()
   assert.equal(bridge.injected, 0)

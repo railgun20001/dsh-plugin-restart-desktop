@@ -1,12 +1,12 @@
 {
   "name": "dsh-restart-desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
-  "description": "DSH 桌面版一键重启：保留窗口位置/大小/最大化状态，可选在重启后自动续上被打断的那一轮对话",
+  "description": "DSH 桌面版一键重启：保留窗口位置/大小/最大化状态/所在显示器，可选在重启后自动续上被打断的会话",
   "meta": {
     "title": "重启桌面版（保窗口 · 续对话）",
-    "description": "宿主半排程一次分离重启（只结束 Electron 主进程，让 host 优雅落盘），helper 在端口释放后拉起新实例并用 Win32 逐像素还原窗口几何；可选把触发重启的那个会话恢复成活 Agent 并注入一条恢复消息。"
+    "description": "宿主半排程一次分离重启（只结束 Electron 主进程，让 host 优雅落盘），helper 在端口释放后拉起新实例并用 Win32 逐像素还原窗口几何（含所在显示器）；可选把重启那一刻真正在跑的会话逐个恢复成活 Agent 并各注入一条恢复消息。"
   },
   "main": "index.js",
   "exports": {

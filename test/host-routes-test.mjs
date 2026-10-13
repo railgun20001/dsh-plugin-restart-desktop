@@ -171,6 +171,13 @@ test('假装是桌面宿主：守卫先拦一次，force=1 才真的去交接', 
     assert.equal(forced.status, 500)
     assert.equal(forced.body.ok, false)
     assert.match(forced.body.error, /辅助进程没能启动/)
+
+    // 恢复标记按「宿主自己看到的实况」写：这一刻在跑的是 a，不是请求里那个 session-x。
+    // 早先只认 session-x，于是后台被打断的会话一条恢复消息都拿不到。
+    const marker = JSON.parse(readFileSync(join(home, 'restart-desktop', 'pending-resume.json'), 'utf8'))
+    assert.deepEqual(marker.sessions, ['a'])
+    assert.equal(marker.interrupted, true)
+    assert.equal(marker.sessionId, 'session-x', 'sessionId 保留客户端报的那个，供状态页展示')
   } finally {
     if (originalExecPath === undefined) delete process.execPath
     else Object.defineProperty(process, 'execPath', originalExecPath)

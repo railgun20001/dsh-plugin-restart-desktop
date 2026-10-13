@@ -7,7 +7,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -18,6 +18,7 @@ import {
   guardReasons,
   guardSnapshot,
   installInProgress,
+  interruptedSessions,
   parseQuery,
   pruneState,
   readSettings,
@@ -139,6 +140,55 @@ test('taskSnapshot / guardReasons：复刻应用的「有没有活在跑」判�
   // 形状不认识也不能抛。
   assert.equal(taskSnapshot({ get: (name) => (name === 'agents' ? {} : {}) }).known, false)
   assert.equal(taskSnapshot({}).known, false)
+})
+
+test('lib/geometry.ps1 必须保持 ASCII-only（5.1 按 ANSI 读无 BOM 脚本）', () => {
+  // 这条不是洁癖：实测踩过 —— 一句中文注释的字节被按 GBK 解码后吞掉了行尾换行，
+  // 于是下一行（`$wantedMonitor = ConvertTo-Monitor $saved.monitor`）整行变成了注释的
+  // 一部分，还原时静默拿不到目标显示器（wanted: null、onTarget: false，且不再纠偏）。
+  // 脚本自己也在文件头写明了这条约束，这里把它钉成断言。
+  const text = readFileSync(new URL('../lib/geometry.ps1', import.meta.url), 'utf8')
+  const offenders = text.split(/\r?\n/u)
+    .map((line, index) => ({ line, number: index + 1 }))
+    .filter((entry) => /[^\u0000-\u007F]/u.test(entry.line))
+  assert.deepEqual(
+    offenders.map((entry) => entry.number),
+    [],
+    `lib/geometry.ps1 第 ${offenders.map((entry) => String(entry.number)).join('、')} 行含非 ASCII 字符：PowerShell 5.1 会把它们解码坏，可能连行尾换行一起吞掉`,
+  )
+})
+
+test('interruptedSessions：只列出「重启那一刻真的在跑」的会话', () => {
+  // 这就是上报现场的那个形状：用户当前打开的是 codefree 会话（空闲，最后一轮 7 分钟前
+  // 就完成了），真正被打断的是另一个会话里挂着的长任务。名单必须以后者为准。
+  const agents = {
+    list: () => [
+      { id: 'idle-current', status: 'inactive', inbox: { nextTurn: [], nextStep: [] } },
+      { id: 'long-task', status: 'running', inbox: { nextTurn: [], nextStep: [] } },
+      { id: 'queued', status: 'inactive', inbox: { nextTurn: [{}, {}], nextStep: [] } },
+      { id: 'with-job', status: 'inactive', inbox: { nextTurn: [], nextStep: [] } },
+    ],
+  }
+  const jobs = {
+    list: (id) => (id === 'with-job' ? [{ status: 'running' }, { status: 'done' }] : []),
+  }
+  const ctx = { get: (name) => (name === 'agents' ? agents : name === 'jobs' ? jobs : undefined) }
+
+  assert.deepEqual(interruptedSessions(ctx), [
+    { id: 'long-task', running: true, queued: 0, jobs: 0 },
+    { id: 'queued', running: false, queued: 2, jobs: 0 },
+    { id: 'with-job', running: false, queued: 0, jobs: 1 },
+  ])
+
+  // 一个都没在跑：名单为空 —— 重启空闲应用不该凭空唤醒任何会话。
+  const quiet = { get: (name) => (name === 'agents' ? { list: () => [{ id: 'a', status: 'inactive' }] } : { list: () => [] }) }
+  assert.deepEqual(interruptedSessions(quiet), [])
+
+  // 服务缺失 / 形状不认识 / 抛错：一律空名单（宁可一条都不恢复，也不凭猜测发消息）。
+  assert.deepEqual(interruptedSessions({ get: () => undefined }), [])
+  assert.deepEqual(interruptedSessions({}), [])
+  assert.deepEqual(interruptedSessions({ get: (name) => (name === 'agents' ? { list: () => { throw new Error('boom') } } : undefined) }), [])
+  assert.deepEqual(interruptedSessions({ get: (name) => (name === 'agents' ? { list: () => 'nope' } : undefined) }), [])
 })
 
 test('guardSnapshot：安装记录也算守卫原因', () => {
