@@ -11,7 +11,7 @@
  * 相对路径（浏览器只拿到这一个文件）。因此本脚本做一次极简的源码内联：把三个源文件
  * 按依赖顺序拼进同一个函数作用域，去掉导出关键字。
  *
- * 顺序即依赖：client-core（纯逻辑）→ menu-bridge（DOM 注入）→ client-main（接线）。
+ * 顺序即依赖：client-core（纯逻辑）→ account-button（DOM 注入）→ client-main（接线）。
  *
  * 用法：
  *   node build/bundle.mjs            # 生成 lib/client.js
@@ -33,7 +33,7 @@ const PACKAGE_NAME = 'dsh-restart-desktop'
 /** 按依赖顺序内联的源文件。 */
 const MODULES = [
   join(ROOT, 'src', 'client-core.js'),
-  join(ROOT, 'src', 'menu-bridge.js'),
+  join(ROOT, 'src', 'account-button.js'),
   join(ROOT, 'src', 'client-main.js'),
 ]
 
@@ -92,9 +92,9 @@ function build() {
  * dsh-restart-desktop —— 客户端 bundle（由 build/bundle.mjs 生成，请不要手改）
  *
  * 内联自：
- *   - src/client-core.js   纯逻辑：入口开关归一化、账号浮窗识别判据、重启状态机
- *   - src/menu-bridge.js   账号浮窗 DOM 注入
- *   - src/client-main.js   接线：DSH 座位服务 → 三个入口 + 插件设置分区
+ *   - src/client-core.js     纯逻辑：账号行识别判据、重启状态机、提示文案
+ *   - src/account-button.js  账号行右侧图标按钮的 DOM 注入
+ *   - src/client-main.js     接线：DSH 座位服务 → 图标按钮 + 官方座位回落 + 提示浮层
  *
  * 协议：DSH 客户端模块系统用 classic <script> 加载本文件，脚本执行时通过
  * window.__ModuleLoader__.load({ id, factory }) 注册工厂；工厂在首次

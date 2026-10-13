@@ -1,6 +1,6 @@
 {
   "name": "dsh-restart-desktop",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "DSH 桌面版一键重启：保留窗口位置/大小/最大化状态/所在显示器，可选在重启后自动续上被打断的会话",
@@ -29,7 +29,7 @@
   ],
   "scripts": {
     "build": "node build/bundle.mjs",
-    "test": "node --test test/client-core-test.mjs test/menu-bridge-test.mjs test/client-bundle-test.mjs test/host-core-test.mjs test/host-routes-test.mjs test/resume-test.mjs",
+    "test": "node --test test/client-core-test.mjs test/account-button-test.mjs test/client-bundle-test.mjs test/host-core-test.mjs test/host-routes-test.mjs test/resume-test.mjs",
     "test:e2e": "node --test test/helper-e2e.mjs",
     "check": "node build/bundle.mjs --check && npm test"
   },

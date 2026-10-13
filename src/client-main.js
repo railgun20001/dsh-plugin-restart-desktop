@@ -1,34 +1,32 @@
 /**
  * dsh-restart-desktop —— 客户端半（浏览器 bundle 的 factory 体）。
  *
- * 职责：
- *   - 在三个座位里放「重启 DSH」入口：侧栏底部（官方座位）、设置 → 通用（官方座位）、
- *     以及账号浮窗「退出登录」下方（DOM 注入，见 src/menu-bridge.js）；
- *   - 维护重启动作的状态机（纯逻辑在 src/client-core.js），把守卫警告、二次确认、
- *     失败重试表达成按钮自己的状态，不弹任何模态框；
- *   - 提供一个插件自己的设置分区：三个入口的开关、还原窗口几何、自动恢复对话、
- *     以及「上一次重启 / 上一次恢复到底成没成」的事实。
+ * 这一版只有**一个入口**：侧栏底部账号行右侧的图标按钮（`src/account-button.js`
+ * 把它注入进官方的账号行）。**单击即重启**：没有二次确认，也不因为「有任务在跑」
+ * 要求再点一次 —— 那个实况只体现在按钮的提示文案与图标语气上。
  *
- * 刻意不依赖 `@deepseek-ai/dsh-client-ui-primitives`：这一版的界面全部由本插件的
- * CSS（数值取自官方 token 与官方组件）画出来，少一个包就少一类「官方改版导致整个
- * 客户端半加载失败」的失败形态。
+ * 官方座位只留一个用途：账号行认不出来时，回落到 `sidebar.footer.action`
+ * （侧栏底部的官方动作座位），用一个图标按钮顶上，免得官方改 DOM 之后这个功能
+ * 彻底消失。除此之外不再注册任何设置页 / 浮窗入口，也不再有任何本机开关。
+ *
+ * 刻意不依赖 `@deepseek-ai/dsh-client-ui-primitives`：界面全部由本插件的 CSS
+ * （数值取自官方 token 与官方组件）画出来，少一个包就少一类「官方改版导致整个客户端半
+ * 加载失败」的失败形态。
  *
  * @module dsh-restart-desktop/client
  */
 
 import {
-  ENTRY_KEYS,
   actionAriaLabel,
   actionDisabled,
-  actionLabel,
+  actionTitle,
   createActionState,
   currentSessionIdOf,
-  normalizeEntries,
   reduceAction,
   sessionIdFromStorage,
   toneOf,
 } from './client-core.js'
-import { startAccountMenuBridge } from './menu-bridge.js'
+import { startAccountButtonBridge } from './account-button.js'
 
 const React = require('react')
 
@@ -40,81 +38,56 @@ const PLUGIN_ID = 'dsh-restart-desktop'
  * 相对路径能正确落在部署前缀下。 */
 const STATUS_ROUTE = `${PLUGIN_ID}/api/status`
 const RESTART_ROUTE = `${PLUGIN_ID}/api/restart`
-const SETTINGS_ROUTE = `${PLUGIN_ID}/api/settings`
 
 /** localStorage 键（带版本后缀：形状变化时换键即自动丢弃旧数据）。 */
-const ENTRIES_KEY = `${PLUGIN_ID}/entries-v1`
 const PENDING_KEY = `${PLUGIN_ID}/pending-v1`
 
-/** 三个座位。 */
+/** 只有两个官方座位：账号行认不出来时的回落入口，以及提示浮层。 */
 const SIDEBAR_FOOTER_SLOT = 'sidebar.footer.action'
-const SETTINGS_ROW_SLOT = 'settings.general.item'
-const SETTINGS_SECTION_SLOT = 'settings.section'
 const OVERLAY_SLOT = 'shell.overlay'
-
-/** 入口的展示文案：`[标题, 说明]`。 */
-const ENTRY_LABELS = {
-  accountMenu: ['账号浮窗里的一项', '显示在侧栏底部账号浮窗的「退出登录」下方'],
-  footer: ['侧栏底部的入口', '显示在左侧边栏底部，和「设置」同一行区域'],
-  settingsRow: ['设置里的入口', '在「设置 → 通用」里多出一行'],
-}
 
 /** 本插件在座位里用的 id。 */
 const SLOT_ID = PLUGIN_ID
 
-/** 硬依赖：没有座位服务就没有界面。 */
+/** 硬依赖：没有座位服务就没有回落入口与提示浮层。 */
 const inject = ['slots']
 
-/** 自己的样式。数值逐字取自官方 token 与官方组件（Button md / 侧栏底行动作 / 设置页行）。 */
+/**
+ * 账号行注入的观察期（毫秒）：这段时间内没注入成功，就挂上官方座位的回落入口。
+ * 官方账号行是首屏渲染出来的，正常情况下远快于这个时间；等待只是为了避免
+ * 「回落入口闪一下又消失」。
+ */
+const FALLBACK_GRACE_MS = 800
+
+/** 提示浮层显示多久（毫秒）。 */
+const NOTICE_MS = 8_000
+
+/** 自己的样式。数值逐字取自官方 token 与官方组件。 */
 const CSS = [
-  // ── 侧栏底部的动作行：与同一座位里的邻居（官方插件面板）保持同一套数值 ──
-  `.dsrd-foot{box-sizing:border-box;flex:none;align-items:center;width:calc(100% + 4px);height:42px;margin:4px -2px;display:flex;position:relative}`,
-  `.dsrd-foot-btn{box-sizing:border-box;width:100%;height:42px;color:var(--dsw-alias-label-primary,inherit);cursor:pointer;background:0 0;border:none;border-radius:12px;align-items:center;gap:8px;padding:0 10px 0 8px;font-family:inherit;font-size:14px;line-height:22px;display:flex;overflow:hidden}`,
+  // ── 账号行右侧的图标按钮 ──
+  // 落点是官方「账号动作区」里的账号行子节点；用 :has() 把那一层变成一行 flex，
+  // 于是账号行（flex:1）自己让位，我们的按钮贴在它右边。类名/层级都不写死。
+  `div:has(> .dsrd-acct-btn){display:flex;flex-direction:row;align-items:center;gap:2px}`,
+  `.dsrd-acct-btn{box-sizing:border-box;order:1;flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin-left:2px;padding:0;border:none;border-radius:8px;cursor:pointer;color:var(--dsw-alias-label-primary,inherit);background:0 0}`,
+  `.dsrd-acct-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.18))}`,
+  `.dsrd-acct-btn:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,rgba(77,107,254,.75));outline-offset:2px}`,
+  `.dsrd-acct-btn:disabled{opacity:.4;cursor:not-allowed;background:0 0}`,
+  // 侧栏收起（轨道模式）时不显示：宽度只够一行账号，塞不下第二个控件。
+  // Windows 上官方本来就把整个底栏隐藏了，这条对 macOS 的轨道同样适用。
+  `[data-sidebar-collapsed] .dsrd-acct-btn{display:none}`,
+  // ── 官方座位的回落入口（账号行认不出来时才挂）──
+  `.dsrd-foot{box-sizing:border-box;flex:none;display:flex;justify-content:flex-end;width:100%;height:36px;margin:0}`,
+  `.dsrd-foot-btn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:none;border-radius:8px;cursor:pointer;font:inherit;color:var(--dsw-alias-label-primary,inherit);background:0 0}`,
   `.dsrd-foot-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.18))}`,
   `.dsrd-foot-btn:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,rgba(77,107,254,.75));outline-offset:2px}`,
-  `.dsrd-foot-btn:disabled{color:var(--dsw-alias-label-tertiary,inherit);cursor:default;background:0 0}`,
-  `.dsrd-foot[data-rail=1]{width:36px;height:36px;margin:8px 0 10px}`,
-  `.dsrd-foot[data-rail=1] .dsrd-foot-btn{border-radius:50%;justify-content:center;gap:0;width:36px;height:36px;padding:0}`,
-  `.dsrd-foot[data-rail=1] .dsrd-foot-label{display:none}`,
-  `.dsrd-foot-label{text-overflow:ellipsis;white-space:nowrap;min-width:0;overflow:hidden}`,
-  `[class*="footerActions"]:has(.dsrd-foot){flex-wrap:wrap !important}`,
-  // ── 状态语气 ──
-  `[data-tone=warn]{color:var(--dsw-alias-state-warn-primary,#d29922)}`,
+  `.dsrd-foot-btn:disabled{opacity:.4;cursor:not-allowed;background:0 0}`,
+  `.dsrd-foot[data-rail=1]{justify-content:center;width:36px;height:36px}`,
+  // ── 状态语气与忙碌动画（只有失败才变色，其余时候与侧栏文字同色）──
   `[data-tone=error]{color:var(--dsw-alias-state-error-primary,#f85149)}`,
-  `[data-tone=ok]{color:var(--dsw-alias-state-success-primary,#3fb950)}`,
   `[data-busy=1] svg{transform-origin:center;animation:dsrd-spin 1s linear infinite}`,
   `@keyframes dsrd-spin{to{transform:rotate(360deg)}}`,
   `@media (prefers-reduced-motion:reduce){[data-busy=1] svg{animation:none}}`,
-  // ── 设置页那一行（settings.general.item）──
-  `.dsrd-row{display:flex;align-items:center;gap:8px;padding:16px 0;border-bottom:.5px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2))}`,
-  `.dsrd-row-text{display:flex;flex-direction:column;flex:1;gap:4px;min-width:0;padding-right:48px}`,
-  `.dsrd-row-label{color:var(--dsw-alias-label-primary,inherit);font-size:14px;font-weight:400;line-height:22px}`,
-  `.dsrd-hint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,rgba(140,140,150,1))}`,
-  // ── 按钮：官方 Button md 的三种变体 ──
-  `.dsrd-btn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:36px;padding:0 14px;border:none;border-radius:var(--dsw-radius-md,12px);cursor:pointer;font:inherit;font-size:14px;line-height:22px;color:var(--dsw-alias-label-primary,inherit);background:transparent;flex:none}`,
-  `.dsrd-btn:disabled{cursor:not-allowed;opacity:.4}`,
-  `.dsrd-btn:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,rgba(77,107,254,.75));outline-offset:2px}`,
-  `.dsrd-btn[data-variant=outline]{border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.35));background:transparent}`,
-  `.dsrd-btn[data-variant=outline]:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.18))}`,
-  `.dsrd-btn[data-variant=primary]{background:var(--dsw-alias-button-primary-fill,rgba(77,107,254,1));color:var(--dsw-alias-label-primary-foreground,#fff)}`,
-  `.dsrd-btn[data-variant=primary]:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,rgba(77,107,254,.85))}`,
-  // ── 插件自己的设置分区 ──
-  `.dsrd-page{box-sizing:border-box;display:flex;flex-direction:column;width:100%;max-width:720px;margin:0 auto;padding:24px}`,
-  `.dsrd-title{color:var(--dsw-alias-label-primary,inherit);margin:0 0 4px;font-size:16px;font-weight:500;line-height:24px}`,
-  `.dsrd-desc{color:var(--dsw-alias-label-secondary,inherit);margin:0;font-size:14px;line-height:22px}`,
-  `.dsrd-subtitle{color:var(--dsw-alias-label-primary,inherit);margin:24px 0 0;font-size:14px;font-weight:500;line-height:22px}`,
-  `.dsrd-set-row{display:flex;align-items:center;gap:12px;padding:16px 0;border-bottom:.5px solid var(--dsw-alias-border-l2,rgba(127,127,127,.2))}`,
-  `.dsrd-set-text{display:flex;flex-direction:column;flex:1;gap:4px;min-width:0;padding-right:48px}`,
-  `.dsrd-set-label{color:var(--dsw-alias-label-primary,inherit);font-size:14px;font-weight:400;line-height:22px}`,
-  `.dsrd-set-actions{display:flex;align-items:center;gap:8px;flex:none}`,
-  `.dsrd-switch{appearance:none;box-sizing:border-box;width:36px;height:20px;border-radius:10px;background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.3));position:relative;cursor:pointer;border:none;transition:background .12s ease;flex:none}`,
-  `.dsrd-switch::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .12s ease}`,
-  `.dsrd-switch:checked{background:var(--dsw-alias-button-primary-fill,rgba(77,107,254,1))}`,
-  `.dsrd-switch:checked::after{transform:translateX(16px)}`,
-  `.dsrd-switch:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,rgba(77,107,254,.75));outline-offset:2px}`,
-  `.dsrd-facts{margin:8px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}`,
-  `.dsrd-facts li{font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,inherit)}`,
-  // ── 重启完成后的浮层提示 ──
+  // ── 排程结果 / 失败原因的浮层提示 ──
   `.dsrd-toast{position:fixed;left:50%;bottom:32px;transform:translateX(-50%);z-index:60;box-sizing:border-box;max-width:min(520px,90vw);padding:10px 14px;border-radius:var(--dsw-radius-md,12px);background:var(--dsw-alias-bg-elevated,rgba(32,32,36,.96));color:var(--dsw-alias-label-primary,#fff);box-shadow:0 6px 24px rgba(0,0,0,.28);font-size:13px;line-height:20px}`,
 ].join('')
 
@@ -129,7 +102,8 @@ if (typeof document !== 'undefined' && document.querySelector(`style[data-plugin
 }
 
 /**
- * 刷新图标：优先用官方组件库的，拿不到就画一个同约定的 16 格描边 SVG。
+ * 刷新图标：16 格描边的刷新箭头（与注入进账号行的那一个同款，
+ * `account-button.js` 里是同一段 SVG 字符串）。
  * @param {number} size 边长。
  * @returns {object} React 元素。
  */
@@ -227,26 +201,28 @@ function apply(ctx) {
   }
 
   // ---- 本机状态 -----------------------------------------------------------
-  const entriesStore = createStore(normalizeEntries(readJson(ENTRIES_KEY, {}), undefined))
   const actionStore = createStore(createActionState())
   const statusStore = createStore(null)
   const noticeStore = createStore(null)
-  const bridgeStore = createStore({ supported: false, found: 0, injected: 0, lastReason: 'not-started' })
+  const buttonStore = createStore({ supported: false, found: 0, injected: 0, lastReason: 'not-started' })
 
-  /** 宿主半给的入口默认值（`/api/status` 里回来）。 */
-  let hostEntries = undefined
+  /** 已经撤过：页面卸载后宿主状态不再覆盖按钮。 */
   let disposed = false
+  /** 提示浮层的定时器。 */
+  let noticeTimer = null
 
   /**
-   * 合并写入一个入口开关并立即重挂入口。
-   * @param {string} key 入口名。
-   * @param {boolean} value 新值。
+   * 显示一条浮层提示（排程结果 / 失败原因 / 重启完成）。
+   * @param {string} text 内容。
    */
-  const setEntry = (key, value) => {
-    const next = { ...entriesStore.getSnapshot(), [key]: value === true }
-    entriesStore.set(next)
-    writeJson(ENTRIES_KEY, next)
-    applyEntries()
+  const showNotice = (text) => {
+    noticeStore.set(text)
+    if (noticeTimer !== null) clearTimeout(noticeTimer)
+    noticeTimer = setTimeout(() => {
+      noticeTimer = null
+      noticeStore.set(null)
+    }, NOTICE_MS)
+    noticeTimer?.unref?.()
   }
 
   /**
@@ -254,7 +230,7 @@ function apply(ctx) {
    * `dsh.sessions.current`。宿主半只用它来判断「这次重启打断了谁」。
    *
    * 退路扫一遍 localStorage 而不是只读一个固定键：键名带不带前缀是客户端内部约定，
-   * 不该成为「自动恢复失效」的原因。两条都拿不到就返回 undefined —— 那时宿主半
+   * 不该成为「自动续接失效」的原因。两条都拿不到就返回 undefined —— 那时宿主半
    * 不写恢复标记，窗口几何照样还原，只是不会自动发恢复消息。
    * @returns {string | undefined} 会话 id。
    */
@@ -283,7 +259,10 @@ function apply(ctx) {
     }
   }
 
-  /** 问一次宿主状态（是不是桌面版、现在有多少活在跑、上次重启/恢复的结果）。 */
+  /**
+   * 问一次宿主状态（是不是桌面版、现在有多少活在跑、上次重启/上次恢复的结果）。
+   * 按钮的提示文案读它，所以鼠标悬停时会再问一次，免得提示里说的实况早已过期。
+   */
   const refreshStatus = async () => {
     if (typeof fetch !== 'function') return
     try {
@@ -291,18 +270,12 @@ function apply(ctx) {
       const body = await response.json().catch(() => null)
       if (disposed || body === null || typeof body !== 'object') return
       statusStore.set(body)
-      if (hostEntries === undefined && body.entries !== null && typeof body.entries === 'object') {
-        hostEntries = body.entries
-        // 宿主 config 给的默认值只补「本机还没存过」的那些键。
-        entriesStore.set(normalizeEntries(readJson(ENTRIES_KEY, {}), hostEntries))
-        applyEntries()
-      }
       const reasons = Array.isArray(body.guard?.reasons) ? body.guard.reasons : []
       actionStore.set(reduceAction(actionStore.getSnapshot(), {
         type: 'status',
         desktop: body.desktop === true,
         guardHint: reasons.join('；'),
-      }, Date.now()))
+      }))
     } catch (error) {
       console.warn(`[${PLUGIN_ID}] 读取宿主状态失败`, error)
     }
@@ -311,84 +284,72 @@ function apply(ctx) {
   /**
    * 请宿主排程一次重启。
    *
-   * `force` 与 `session` 都走查询参数而不是请求体：桌面壳转发页面 fetch 时只保证
-   * URL 与头部到达，少一种失败形态就少一类「点了没反应」。
-   * @param {boolean} force 是否已确认「我知道有东西在跑」。
+   * 单击即执行：请求固定带 `?force=1`，宿主半因此不会再拦一次 —— 「有任务在跑」
+   * 只体现在悬停提示上，不再是需要点两次的门槛。`session` 也走查询参数，因为桌面壳
+   * 转发页面 fetch 时只保证 URL 与头部到达。
    * @returns {Promise<void>} 完成。
    */
-  const requestRestart = async (force) => {
+  const requestRestart = async () => {
     const sessionId = currentSessionId()
     const params = new URLSearchParams()
     if (typeof sessionId === 'string' && sessionId !== '') params.set('session', sessionId)
-    if (force) params.set('force', '1')
-    const query = params.toString()
+    params.set('force', '1')
     let response
     try {
-      response = await fetch(query === '' ? RESTART_ROUTE : `${RESTART_ROUTE}?${query}`, { method: 'POST' })
+      response = await fetch(`${RESTART_ROUTE}?${params.toString()}`, { method: 'POST' })
     } catch (error) {
-      actionStore.set(reduceAction(actionStore.getSnapshot(), {
-        type: 'result',
-        ok: false,
-        text: `请求失败：${String((error && error.message) || error)}`,
-      }, Date.now()))
+      const text = `重启请求失败：${String((error && error.message) || error)}`
+      actionStore.set(reduceAction(actionStore.getSnapshot(), { type: 'result', ok: false, text }))
+      showNotice(text)
       return
     }
     const body = await response.json().catch(() => null)
     if (response.ok && body?.ok === true) {
-      // 记一笔本机标记：页面重新加载后据此提示「重启完成」，并顺带说明恢复结果。
+      // 记一笔本机标记：页面重新加载后据此提示「重启完成」。
       writeJson(PENDING_KEY, { at: Date.now(), sessionId: sessionId ?? null })
       actionStore.set(reduceAction(actionStore.getSnapshot(), {
         type: 'result',
         ok: true,
         text: '已排程重启：窗口即将关闭，随后自动打开并还原到原来的位置与大小。',
-      }, Date.now()))
+      }))
       return
     }
-    if (body?.guard?.active === true) {
-      actionStore.set(reduceAction(actionStore.getSnapshot(), {
-        type: 'result',
-        ok: false,
-        guard: true,
-        text: String(body.error ?? '现在有任务在跑'),
-        guardHint: (Array.isArray(body.guard.reasons) ? body.guard.reasons : []).join('；'),
-      }, Date.now()))
-      return
-    }
-    actionStore.set(reduceAction(actionStore.getSnapshot(), {
-      type: 'result',
-      ok: false,
-      text: String(body?.error ?? `HTTP ${String(response.status)}`),
-    }, Date.now()))
+    const text = String(body?.error ?? `HTTP ${String(response.status)}`)
+    actionStore.set(reduceAction(actionStore.getSnapshot(), { type: 'result', ok: false, text }))
+    showNotice(text)
   }
 
-  /** 按一次按钮：状态机决定是「进入确认」「警告」还是「真的发请求」。 */
+  /** 按一次按钮：立即进入 busy 并发出重启请求；busy / done 期间的重复点击被忽略。 */
   const press = () => {
-    const next = reduceAction(actionStore.getSnapshot(), { type: 'press' }, Date.now())
+    const next = reduceAction(actionStore.getSnapshot(), { type: 'press' })
     actionStore.set(next)
-    if (next.phase === 'busy') void requestRestart(next.force === true)
+    if (next.phase === 'busy') void requestRestart()
   }
 
-  /** 改一个宿主侧设置（还原窗口几何 / 自动恢复对话）。 */
-  const setHostSetting = async (key, value) => {
-    try {
-      const response = await fetch(`${SETTINGS_ROUTE}?${key}=${value ? '1' : '0'}`, { method: 'POST' })
-      const body = await response.json().catch(() => null)
-      if (body?.settings !== null && typeof body?.settings === 'object') {
-        const current = statusStore.getSnapshot()
-        statusStore.set({ ...(current ?? {}), settings: body.settings })
-      }
-    } catch (error) {
-      console.warn(`[${PLUGIN_ID}] 写入插件设置失败`, error)
-    }
-  }
+  /** 把动作状态翻译成图标按钮的视图（样式与提示都由它决定）。 */
+  const viewOf = (action) => ({
+    busy: action.phase === 'busy',
+    tone: toneOf(action),
+    disabled: actionDisabled(action),
+    title: actionTitle(action),
+    ariaLabel: actionAriaLabel(action),
+  })
 
-  /** 三个入口共用的动作状态。 */
+  /** 按钮共用的动作状态。 */
   const useAction = () => useStore(actionStore)
 
-  // ---- 三个入口的组件 ------------------------------------------------------
+  /** 重启完成 / 失败原因的浮层提示。 */
+  function RestartNotice() {
+    const notice = useStore(noticeStore)
+    if (notice === null) return null
+    return React.createElement('div', { className: 'dsrd-toast', role: 'status' }, notice)
+  }
 
-  /** 侧栏底部的入口（官方座位）。 */
-  function SidebarRestartAction(props) {
+  /**
+   * 官方座位的回落入口：账号行认不出来时才挂上，形态与注入的那一个一致
+   * （图标按钮，单击即重启）。
+   */
+  function FallbackRestartButton(props) {
     const action = useAction()
     const wide = !(props !== null && props !== undefined && props.wide === false)
     return React.createElement('div', { className: 'dsrd-foot', 'data-rail': wide ? '0' : '1' },
@@ -398,265 +359,115 @@ function apply(ctx) {
         'data-busy': action.phase === 'busy' ? '1' : '0',
         'data-tone': toneOf(action),
         disabled: actionDisabled(action),
-        title: action.message !== '' ? action.message : '重启整个桌面应用（结束当前实例并重新打开，窗口位置与大小保留）',
+        title: actionTitle(action),
         'aria-label': actionAriaLabel(action),
         onClick: press,
-      },
-      Glyph(16),
-      React.createElement('span', { className: 'dsrd-foot-label' }, actionLabel(action))))
+      }, Glyph(16)))
   }
 
-  /** 设置 → 通用里的一行（官方座位）。 */
-  function SettingsRestartRow() {
-    const action = useAction()
-    const hint = action.message !== ''
-      ? action.message
-      : (action.desktop === false
-        ? '当前不是桌面版，这一行只在桌面应用里可用。'
-        : (action.guardHint !== ''
-          ? `${action.guardHint}；再点一次仍会重启，但那会打断它们。`
-          : '重启整个桌面应用，并还原窗口的位置与大小。改了插件或设置、需要重启才生效时用这个。'))
-    return React.createElement('div', { className: 'dsrd-row' },
-      React.createElement('div', { className: 'dsrd-row-text' },
-        React.createElement('span', { className: 'dsrd-row-label' }, '重启桌面版'),
-        React.createElement('span', { className: 'dsrd-hint', 'data-tone': toneOf(action) }, hint)),
-      React.createElement('button', {
-        type: 'button',
-        className: 'dsrd-btn',
-        'data-variant': 'outline',
-        'data-busy': action.phase === 'busy' ? '1' : '0',
-        disabled: actionDisabled(action),
-        'aria-label': actionAriaLabel(action),
-        onClick: press,
-      }, Glyph(14), actionLabel(action)))
-  }
+  // ---- 注入账号行按钮 + 官方座位回落 ---------------------------------------
 
-  /** 重启完成后的浮层提示（只在页面重新加载后出现一次）。 */
-  function BootNotice() {
-    const notice = useStore(noticeStore)
-    if (notice === null) return null
-    return React.createElement('div', { className: 'dsrd-toast', role: 'status' }, notice)
-  }
+  /** 官方座位回落入口的 disposer。 */
+  let fallbackDisposer = null
+  let fallbackVisible = false
+  /** 观察期是否已经过去（过去之前不挂回落入口，避免闪一下又消失）。 */
+  let graceElapsed = false
 
-  /** 插件自己的设置分区。 */
-  function RestartSettingsSection() {
-    const entries = useStore(entriesStore)
-    const action = useAction()
-    const status = useStore(statusStore)
-    const bridge = useStore(bridgeStore)
-    const [busy, setBusy] = React.useState(false)
-
-    React.useEffect(() => {
-      void refreshStatus()
-    }, [])
-
-    const desktop = status?.desktop !== false
-    const settings = status?.settings ?? {}
-    const guardReasons = Array.isArray(status?.guard?.reasons) ? status.guard.reasons : []
-
-    /** 一个带标题/说明/开关的行。 */
-    const switchRow = (title, description, checked, onChange, disabled) => React.createElement('div', { className: 'dsrd-set-row', key: title },
-      React.createElement('div', { className: 'dsrd-set-text' },
-        React.createElement('span', { className: 'dsrd-set-label' }, title),
-        React.createElement('span', { className: 'dsrd-hint' }, description)),
-      React.createElement('div', { className: 'dsrd-set-actions' },
-        React.createElement('input', {
-          type: 'checkbox',
-          className: 'dsrd-switch',
-          checked: checked === true,
-          disabled: disabled === true,
-          'aria-label': title,
-          onChange: (event) => onChange(event.target.checked),
-        })))
-
-    /** 一条只读事实。 */
-    const fact = (text, tone) => React.createElement('li', { key: text, 'data-tone': tone }, text)
-
-    const facts = []
-    facts.push(fact(desktop ? '当前是桌面版宿主。' : '当前不是桌面版：重启入口只在桌面应用里可用。'))
-    if (guardReasons.length > 0) facts.push(fact(`现在停掉会打断：${guardReasons.join('；')}`, 'warn'))
-    else facts.push(fact('现在没有正在跑的任务。', 'ok'))
-    if (status?.restart) {
-      const geometry = status.restart.geometry
-      facts.push(fact(
-        `上一次重启：${status.restart.ok === true ? '成功' : `未完成（${String(status.restart.stage ?? '未知阶段')}）`}`
-        + (geometry === null || geometry === undefined
-          ? ''
-          : geometry.captured === true
-            ? `；窗口几何已捕获${geometry.maximized === true ? '（最大化）' : geometry.minimized === true ? '（最小化）' : ''}并还原`
-            : '；没有捕获到窗口几何'),
-      ))
-    }
-    if (status?.resume) {
-      const resumedSessions = Array.isArray(status.resume.sessions) ? status.resume.sessions : []
-      facts.push(fact(
-        `上一次自动恢复：${status.resume.resumed === true
-          ? resumedSessions.length > 1
-            ? `已恢复 ${String(resumedSessions.length)} 个被打断的会话（${resumedSessions.join('、')}）并各发出一条恢复消息`
-            : `已把会话 ${String(status.resume.sessionId ?? '')} 恢复并发出一条恢复消息`
-          : `没有恢复（${String(status.resume.reason ?? '未知原因')}）`}`,
-        status.resume.resumed === true ? 'ok' : undefined,
-      ))
-    }
-    facts.push(fact(`账号浮窗入口：${bridge.supported !== true ? '本页不支持' : bridge.injected > 0 ? '已注入' : '尚未找到账号浮窗（打开一次账号菜单即可）'}`))
-
-    return React.createElement('div', { className: 'dsrd-page' },
-      React.createElement('h3', { className: 'dsrd-title' }, '重启桌面版'),
-      React.createElement('p', { className: 'dsrd-desc' }, '重启整个 DeepSeek Harness 桌面应用：只结束 Electron 主进程，让 host 把会话日志正常落盘，随后自动拉起新实例并还原窗口的位置、大小与最大化状态。'),
-      React.createElement('h4', { className: 'dsrd-subtitle' }, '入口'),
-      ...ENTRY_KEYS.map((key) => switchRow(ENTRY_LABELS[key][0], ENTRY_LABELS[key][1], entries[key], (value) => setEntry(key, value))),
-      React.createElement('h4', { className: 'dsrd-subtitle' }, '重启行为'),
-      switchRow(
-        '重启后还原窗口位置与大小',
-        '应用自己不记窗口几何（每次启动都回到 1280×820），所以由本插件在重启前后接管：位置、大小、最大化状态，以及它当时在哪块显示器上。关掉后重启会回到默认尺寸。',
-        settings.geometry,
-        (value) => void setHostSetting('geometry', value),
-        !desktop,
-      ),
-      switchRow(
-        '重启后自动续上被打断的那一轮对话',
-        '只接「重启排程那一刻真的在跑」的会话：正在生成或跑工具、有排队消息、或有后台任务在跑的那些，各发一条恢复消息。空闲会话不会被唤醒，历史会话更不会被扫到。',
-        settings.resume,
-        (value) => void setHostSetting('resume', value),
-        !desktop,
-      ),
-      React.createElement('h4', { className: 'dsrd-subtitle' }, '现在'),
-      React.createElement('div', { className: 'dsrd-set-row' },
-        React.createElement('div', { className: 'dsrd-set-text' },
-          React.createElement('span', { className: 'dsrd-set-label' }, actionLabel(action)),
-          React.createElement('span', { className: 'dsrd-hint', 'data-tone': toneOf(action) }, action.message === '' ? '点右侧按钮重启；有任务在跑时会先警告一次。' : action.message)),
-        React.createElement('div', { className: 'dsrd-set-actions' },
-          React.createElement('button', {
-            type: 'button',
-            className: 'dsrd-btn',
-            'data-variant': 'outline',
-            disabled: busy,
-            onClick: async () => {
-              setBusy(true)
-              await refreshStatus()
-              setBusy(false)
-            },
-          }, '刷新状态'),
-          React.createElement('button', {
-            type: 'button',
-            className: 'dsrd-btn',
-            'data-variant': 'primary',
-            'data-busy': action.phase === 'busy' ? '1' : '0',
-            disabled: actionDisabled(action),
-            onClick: press,
-          }, Glyph(14), actionLabel(action)))),
-      React.createElement('ul', { className: 'dsrd-facts' }, facts))
-  }
-
-  // ---- 注册与重挂 ----------------------------------------------------------
-
-  /** 三个入口的 disposer；开关变化时整批撤掉重挂。 */
-  let entryDisposers = []
-  /** 浮窗桥的句柄。 */
-  let bridge = null
-
-  /** 撤掉已经注册的入口。 */
-  const clearEntries = () => {
-    for (const dispose of entryDisposers) {
+  /**
+   * 挂上 / 撤掉官方座位的回落入口。
+   * @param {boolean} visible 是否要显示回落入口。
+   */
+  const setFallback = (visible) => {
+    if (visible === fallbackVisible) return
+    fallbackVisible = visible
+    if (!visible) {
       try {
-        dispose()
+        fallbackDisposer?.()
       } catch {
         /* 已经撤掉了 */
       }
+      fallbackDisposer = null
+      return
     }
-    entryDisposers = []
     try {
-      bridge?.stop()
-    } catch {
-      /* 停不掉无所谓 */
-    }
-    bridge = null
-  }
-
-  /** 按当前开关注册一轮入口。 */
-  const applyEntries = () => {
-    if (disposed) return
-    clearEntries()
-    const entries = entriesStore.getSnapshot()
-    const push = (disposer) => { if (typeof disposer === 'function') entryDisposers.push(disposer) }
-    try {
-      if (entries.footer) {
-        push(slots.inject(SIDEBAR_FOOTER_SLOT, () => slots.register({
-          name: SIDEBAR_FOOTER_SLOT,
-          id: SLOT_ID,
-          order: 100,
-          label: '重启 DSH',
-        }, SidebarRestartAction)))
-      }
-      if (entries.settingsRow) {
-        push(slots.inject(SETTINGS_ROW_SLOT, () => slots.register({
-          name: SETTINGS_ROW_SLOT,
-          id: SLOT_ID,
-          order: 91,
-        }, SettingsRestartRow)))
-      }
-      if (entries.accountMenu) {
-        bridge = startAccountMenuBridge({
-          label: '重启 DSH',
-          onActivate: press,
-          onStatus: (status) => bridgeStore.set(status),
-        })
-        bridgeStore.set(bridge.status())
-      }
+      fallbackDisposer = slots.inject(SIDEBAR_FOOTER_SLOT, () => slots.register({
+        name: SIDEBAR_FOOTER_SLOT,
+        id: SLOT_ID,
+        order: 100,
+        label: '重启 DSH',
+      }, FallbackRestartButton)) ?? null
+      const line = `[${PLUGIN_ID}] 没能在账号行右侧注入按钮（${buttonStore.getSnapshot().lastReason}），改用侧栏底部的官方座位`
+      if (typeof ctx.logger?.warn === 'function') ctx.logger.warn(line)
+      else console.warn(line)
     } catch (error) {
-      console.error(`[${PLUGIN_ID}] 注册入口失败`, error)
+      console.error(`[${PLUGIN_ID}] 注册回落入口失败`, error)
     }
   }
 
-  // 插件自己的设置分区不受开关影响：否则关掉入口就再也回不来了。
-  ctx.effect(() => slots.inject(SETTINGS_SECTION_SLOT, () => slots.register({
-    name: SETTINGS_SECTION_SLOT,
-    id: SLOT_ID,
-    order: 90,
-    label: () => '重启桌面版',
-  }, RestartSettingsSection)))
+  const accountButton = startAccountButtonBridge({
+    onActivate: press,
+    // 悬停时问一次宿主：提示里的「有任务在跑」因此是实时的，而不是首页那一次的旧快照。
+    onHover: () => { void refreshStatus() },
+    onStatus: (status) => {
+      buttonStore.set(status)
+      setFallback(graceElapsed && status.injected === 0)
+    },
+  })
 
-  // 重启完成后的浮层提示。
+  // 按钮的视图跟着动作状态走：忙碌转圈、提示文案（以及失败时的变色）都在这里更新。
+  const syncButton = () => accountButton.update(viewOf(actionStore.getSnapshot()))
+  actionStore.subscribe(syncButton)
+  syncButton()
+
+  const graceTimer = setTimeout(() => {
+    graceElapsed = true
+    setFallback(buttonStore.getSnapshot().injected === 0)
+  }, FALLBACK_GRACE_MS)
+  graceTimer?.unref?.()
+
+  // 提示浮层走官方 shell.overlay 座位。
   ctx.effect(() => slots.inject(OVERLAY_SLOT, () => slots.register({
     name: OVERLAY_SLOT,
     id: SLOT_ID,
     order: 90,
     label: () => '重启提示',
-  }, BootNotice)))
+  }, RestartNotice)))
 
-  applyEntries()
   ctx.effect(() => () => {
     disposed = true
-    clearEntries()
+    if (noticeTimer !== null) clearTimeout(noticeTimer)
+    clearTimeout(graceTimer)
+    accountButton.stop()
+    try {
+      fallbackDisposer?.()
+    } catch {
+      /* 已经撤掉了 */
+    }
+    fallbackDisposer = null
   })
 
-  // 页面重新加载过 = 上一次排程的重启应该已经发生：提示一次，并问宿主拿恢复结果。
+  // 页面重新加载过 = 上一次排程的重启应该已经发生：提示一次。
   const pending = readJson(PENDING_KEY, null)
   if (pending !== null) {
     removeKey(PENDING_KEY)
-    const parts = ['桌面版已重启。']
-    if (typeof pending.sessionId === 'string' && pending.sessionId !== '') parts.push('窗口位置与大小已按重启前还原。')
-    noticeStore.set(parts.join(''))
-    const timer = setTimeout(() => { noticeStore.set(null) }, 8000)
-    timer?.unref?.()
+    showNotice('桌面版已重启，窗口位置与大小已按重启前还原。')
   }
 
   void refreshStatus()
 
-  ctx.logger?.info?.(`[${PLUGIN_ID}] 客户端半 v${BUNDLE_VERSION} 已启动：入口 ${JSON.stringify(entriesStore.getSnapshot())}`)
+  ctx.logger?.info?.(`[${PLUGIN_ID}] 客户端半 v${BUNDLE_VERSION} 已启动：账号行图标按钮 + 官方座位回落`)
 
   // ---- 诊断入口（排障与端到端验证用）--------------------------------------
   try {
     globalThis.__DSH_RESTART_DESKTOP__ = {
       version: BUNDLE_VERSION,
-      entries: () => ({ ...entriesStore.getSnapshot() }),
-      setEntry,
       status: () => statusStore.getSnapshot(),
       action: () => ({ ...actionStore.getSnapshot() }),
-      bridge: () => (bridge === null ? null : bridge.status()),
-      sweepMenu: () => (bridge === null ? null : bridge.sweep()),
+      button: () => accountButton.status(),
+      sweep: () => accountButton.sweep(),
       refreshStatus,
-      restart: (force) => requestRestart(force === true),
+      press,
+      restart: () => requestRestart(),
     }
   } catch {
     /* 只读全局对象等极端环境下放弃暴露诊断入口 */

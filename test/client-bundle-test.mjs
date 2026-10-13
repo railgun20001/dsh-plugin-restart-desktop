@@ -6,8 +6,8 @@
  * 整个 web boot 失败（客户端模块系统会重试同一个 bundle，第二次注册同一个 factory
  * 会以 "duplicate factory registration" 收场），代价远高于一个入口不显示。
  *
- * 覆盖：factory 能注册、apply 能跑完、四个座位都挂上、本机开关能关掉入口、
- * slots 缺失时优雅退出、诊断入口可用。
+ * 覆盖：factory 能注册、apply 能跑完、账号行有按钮时只挂提示浮层、账号行认不出来时
+ * 回落到官方座位、slots 缺失时优雅退出、刷新后的「已重启」提示消费掉、诊断入口可用。
  *
  * 运行：`node --test test/client-bundle-test.mjs`
  */
@@ -17,6 +17,8 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+
+import { FakeDocument, FakeElement } from './fake-dom.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const BUNDLE = readFileSync(join(ROOT, 'lib', 'client.js'), 'utf8')
@@ -30,30 +32,30 @@ const fakeReact = {
   useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
 }
 
-/** 一个够用的 document 替身：只实现 bundle 里真正用到的那几处。 */
-function fakeDocument() {
-  const head = { appendChild: () => {} }
-  const body = { appendChild: () => {}, addEventListener: () => {} }
-  return {
-    head,
-    body,
-    documentElement: body,
-    defaultView: { KeyboardEvent: class { constructor(type) { this.type = type } } },
-    querySelector: () => null,
-    querySelectorAll: () => [],
-    createElement: () => ({
-      dataset: {},
-      style: {},
-      children: [],
-      setAttribute: () => {},
-      getAttribute: () => null,
-      appendChild: () => {},
-      addEventListener: () => {},
-      textContent: '',
-      innerHTML: '',
-      className: '',
-    }),
+/**
+ * 造一个假文档：bundle 会在模块作用域里注入 `<style>`，因此 head / createElement /
+ * querySelector 都得在。
+ * @param {{ accountRow?: boolean }} [options] 是否预先放一行账号。
+ * @returns {FakeDocument} 假文档。
+ */
+function bundleDocument(options = {}) {
+  const doc = new FakeDocument()
+  doc.head = new FakeElement('head', doc)
+  doc.defaultView = {}
+  doc.querySelector = () => null
+  if (options.accountRow === true) {
+    const area = new FakeElement('div', doc)
+    const accountRoot = new FakeElement('div', doc)
+    const menuRoot = new FakeElement('span', doc)
+    const trigger = new FakeElement('button', doc)
+    trigger.setAttribute('data-signed-out', 'false')
+    trigger.setAttribute('aria-haspopup', 'menu')
+    menuRoot.appendChild(trigger)
+    accountRoot.appendChild(menuRoot)
+    area.appendChild(accountRoot)
+    doc.body.appendChild(area)
   }
+  return doc
 }
 
 /** 一个够用的 localStorage 替身。 */
@@ -87,7 +89,7 @@ function loadBundle(options = {}) {
   const run = new Function('window', 'document', 'localStorage', 'fetch', 'MutationObserver', 'require', BUNDLE)
   run(
     windowShim,
-    options.document ?? fakeDocument(),
+    options.document ?? bundleDocument(),
     options.localStorage,
     undefined,
     undefined,
@@ -126,37 +128,43 @@ function fakeContext({ withSlots = true } = {}) {
 /** 已注册座位的名字（去重）。 */
 const slotNames = (registrations) => [...new Set(registrations.map((entry) => entry.options.name))].sort()
 
+/** 等观察期过去（回落入口的判定发生在观察期结束时）。 */
+const afterGrace = () => new Promise((resolve) => { setTimeout(resolve, 900) })
+
 test('bundle 注册 factory 并导出 apply / inject', () => {
   const loaded = loadBundle()
   assert.equal(typeof loaded.apply, 'function')
   assert.deepEqual(loaded.inject, ['slots'])
 })
 
-test('apply：默认三个入口 + 设置分区 + 重启提示浮层全部挂上', () => {
-  const loaded = loadBundle()
+test('apply：账号行已经在了 → 只挂提示浮层，不挂官方座位的回落入口', async () => {
+  const doc = bundleDocument({ accountRow: true })
+  const loaded = loadBundle({ document: doc })
   const { ctx, registrations } = fakeContext()
   loaded.apply(ctx)
 
-  assert.deepEqual(
-    slotNames(registrations),
-    ['settings.general.item', 'settings.section', 'shell.overlay', 'sidebar.footer.action'].sort(),
-  )
+  const injected = doc.body.querySelectorAll('button[data-dsh-restart-desktop-button="1"]')
+  assert.equal(injected.length, 1, '账号行右侧应当已经出现图标按钮')
+
+  await afterGrace()
+  assert.deepEqual(slotNames(registrations), ['shell.overlay'], '注入成功就不该再有回落入口')
   for (const entry of registrations) {
     assert.equal(typeof entry.component, 'function', `${entry.options.name} 的组件必须是函数`)
     assert.equal(typeof entry.options.id, 'string')
   }
-  const section = registrations.find((entry) => entry.options.name === 'settings.section')
-  assert.equal(section.options.label(), '重启桌面版')
 })
 
-test('apply：本机开关能关掉入口，但设置分区始终在（否则关掉就回不来）', () => {
-  const localStorageShim = fakeLocalStorage({
-    'dsh-restart-desktop/entries-v1': JSON.stringify({ footer: false, settingsRow: false, accountMenu: false }),
-  })
-  const loaded = loadBundle({ localStorage: localStorageShim })
-  const { ctx, registrations } = fakeContext()
+test('apply：账号行认不出来 → 观察期过后回落到官方 sidebar.footer.action 座位', async () => {
+  const loaded = loadBundle()
+  const { ctx, registrations, logs } = fakeContext()
   loaded.apply(ctx)
-  assert.deepEqual(slotNames(registrations), ['settings.section', 'shell.overlay'])
+  assert.deepEqual(slotNames(registrations), ['shell.overlay'], '观察期内先不挂回落入口')
+
+  await afterGrace()
+  assert.deepEqual(slotNames(registrations), ['shell.overlay', 'sidebar.footer.action'])
+  assert.equal(logs.some((line) => line.includes('改用侧栏底部的官方座位')), true)
+  const fallback = registrations.find((entry) => entry.options.name === 'sidebar.footer.action')
+  assert.equal(fallback.options.label, '重启 DSH')
 })
 
 test('apply：没有 slots 服务时优雅退出，不抛错', () => {
@@ -183,7 +191,7 @@ test('apply：页面重载后提示一次「已重启」，并把标记消费掉
   assert.equal(localStorageShim.store.has('dsh-restart-desktop/pending-v1'), false, '标记必须被消费，否则每次刷新都提示')
 })
 
-test('诊断入口：暴露版本、入口开关与浮窗桥状态', () => {
+test('诊断入口：暴露版本与账号行按钮状态', () => {
   const loaded = loadBundle()
   loaded.apply(fakeContext().ctx)
   const diagnostics = globalThis.__DSH_RESTART_DESKTOP__
@@ -191,9 +199,9 @@ test('诊断入口：暴露版本、入口开关与浮窗桥状态', () => {
   // 版本从 package.json 读，跟着发版走 —— 免得每次改版本都要改测试。
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   assert.equal(diagnostics.version, pkg.version)
-  assert.deepEqual(diagnostics.entries(), { accountMenu: true, footer: true, settingsRow: true })
-  const bridge = diagnostics.bridge()
-  assert.equal(bridge.injected, 0)
-  assert.equal(bridge.supported, true)
+  const button = diagnostics.button()
+  assert.equal(button.injected, 0)
+  assert.equal(button.supported, true)
+  assert.equal(diagnostics.action().phase, 'idle')
   delete globalThis.__DSH_RESTART_DESKTOP__
 })

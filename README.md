@@ -2,15 +2,15 @@
 
 DSH 桌面版（DeepSeek Harness Electron 壳）的**一键重启**插件：**保留窗口位置、大小、最大化状态与所在显示器**，可选在重启后**自动续上被打断的会话**（不只是你当前打开的那个）。
 
-三个入口，默认全开，可在插件设置页逐个关闭：
+只有一个入口：**侧栏底部账号行右侧的图标按钮**（刷新图标）。**单击即重启** —— 没有二次确认，有任务在跑时也不要求再点一次（那一路实况只写进悬停提示）。插件不提供任何设置页配置。
 
 | 入口 | 位置 |
 |---|---|
-| **账号浮窗** | 侧栏底部账号浮窗里，**「退出登录」正下方** |
-| **侧栏底部** | 侧栏底部、与「设置」同一行区域（官方给第三方插件的动作座位） |
-| **设置 → 通用** | 「重启桌面版」一行 |
+| **账号行右侧图标** | 侧栏底部那一行账号（头像 + 昵称）的右边 |
 
-另外还注册了斜杠命令 `/restart-desktop`（有任务在跑时用 `/restart-desktop --force` 越过警告）。
+账号行认不出来时（官方改了 DOM）会自动回落到官方给第三方插件的动作座位 `sidebar.footer.action`（侧栏底部同一行区域的图标按钮），功能不会凭空消失。
+
+另外还注册了斜杠命令 `/restart-desktop`（一样单击即重启；这条路上的宿主侧警告仍需 `/restart-desktop --force` 越过）。
 
 ---
 
@@ -92,7 +92,7 @@ DeepSeek Harness.exe            ← Electron 主进程：窗口、托盘、更�
 plugin_manager(action: "install_bundle", target: "link:C:\work\my\dsh\plugins\dsh-restart-desktop")
 ```
 
-安装后 DSH 的 HMR 会当场把两半挂上，**不需要重启**（实测：安装后宿主路由立即应答、三个座位立即被占用）。如果入口没出现，刷新一次页面即可。
+安装后 DSH 的 HMR 会当场把两半挂上，**不需要重启**（实测：安装后宿主路由立即应答，客户端半的图标按钮立即出现在账号行右侧）。如果入口没出现，刷新一次页面即可。
 
 在别的机器上装：
 
@@ -102,25 +102,26 @@ plugin_manager(action: "install_bundle", target: "link:C:\work\my\dsh\plugins\ds
 "dependencies": { "dsh-restart-desktop": "link:C:/work/my/dsh/plugins/dsh-restart-desktop" }
 ```
 
-正常情况下 HMR 会当场把两半挂上，不必重启。只有在没开 HMR 的组合里，宿主半才要等 **DSH 下次启动**；客户端半每次刷新页面重新取。两半版本不一致时，设置页里会显示宿主版本。
+正常情况下 HMR 会当场把两半挂上，不必重启。只有在没开 HMR 的组合里，宿主半才要等 **DSH 下次启动**；客户端半每次刷新页面重新取。两半版本不一致时，控制台 `__DSH_RESTART_DESKTOP__.status().version` 是宿主版本、`__DSH_RESTART_DESKTOP__.version` 是客户端版本。
 
 ---
 
 ## 使用
 
-- **账号浮窗**：点侧栏底部的账号行 → 菜单最下方「重启 DSH」。
-- **侧栏底部**：和「设置」同一行区域的「重启 DSH」。
-- **设置 → 通用**：「重启桌面版」一行。
-- **斜杠命令**：`/restart-desktop`；有任务在跑时先警告一次，`/restart-desktop --force` 才是「我看过了」。
+点侧栏底部**账号行右侧的刷新图标**：一次点击就排程重启 —— 窗口的位置、大小、最大化状态与所在显示器保留，被打断的会话按宿主实况自动续接；页面随后断开，应用重启并回到原来的样子。
 
-有任务在跑时**只警告、不硬拦**：第二次点击（且过了 900ms 冷却，避免双击等于忽略警告）才真的执行。硬拦会在 helper 卡住时把重启按钮永久锁死，而解除它恰恰需要重启应用。
+**单击即重启意味着不拦你**：宿主守卫（有任务在跑 / 插件正在安装）不再要求第二次点击，只在按钮的悬停提示里说明「会打断它们」。斜杠命令那条路仍然保留一次警告（`/restart-desktop --force` 才是「我看过了」）。
 
-### 设置页（设置 → 重启桌面版）
+### 配置
 
-- 三个入口的开关（存在浏览器本地，改完立即生效）；
-- **重启后还原窗口位置与大小**（默认开；关掉后重启回到应用默认的 1280×820）；连最大化状态与所在显示器一起还原；
-- **重启后自动续上被打断的会话**（默认开；按宿主实况取名单，不是「当前打开的会话」）；
-- 事实展示：是不是桌面版、现在停掉会打断什么、**上一次重启到底成没成**、**上一次自动恢复到底成没成（接上了哪几个会话）**、账号浮窗入口有没有注入成功。
+插件**没有设置页**，界面开关一个都不提供。两个宿主侧行为开关仍有默认值（都是开），需要时改插件 config 或宿主侧设置文件：
+
+```jsonc
+// ~/.dsh/profiles/desktop/package.json 里本插件那一行的 config
+{ "geometry": true, "resume": true }   // 还原窗口几何 / 自动续接被打断的会话
+```
+
+宿主侧设置文件 `~/.dsh/restart-desktop/settings.json` 优先于 config；也可以 `POST /dsh-restart-desktop/api/settings?geometry=0&resume=0` 改。
 
 ### 排障
 
@@ -128,10 +129,12 @@ plugin_manager(action: "install_bundle", target: "link:C:\work\my\dsh\plugins\ds
 
 ```js
 __DSH_RESTART_DESKTOP__.status()      // 宿主状态快照
-__DSH_RESTART_DESKTOP__.bridge()      // 账号浮窗桥的状态（injected / found / lastReason）
-__DSH_RESTART_DESKTOP__.sweepMenu()   // 立刻重扫一次浮窗
-__DSH_RESTART_DESKTOP__.entries()     // 三个入口的开关
+__DSH_RESTART_DESKTOP__.button()      // 账号行按钮的注入状态（found / injected / lastReason）
+__DSH_RESTART_DESKTOP__.sweep()       // 立刻重扫一次账号行
+__DSH_RESTART_DESKTOP__.action()      // 按钮此刻的动作状态
 ```
+
+`button().lastReason` 的取值：`injected`（这一轮插进去了）、`already-present`（已经在位）、`no-account-row`（没找到账号行）、`insert-failed`、`no-document`（不是浏览器环境）。
 
 宿主侧的交接记录在 `~/.dsh/restart-desktop/`：`handoff-*.json`、`restart-*.log`、`restart-*.result.json`、`restart-*.geometry.json`（保留最近 20 组）。几何结果文件里除了矩形，还有 `wanted` / `actual` / `onTarget` / `corrected`（显示器名与矩形），重启后窗口到底落在哪块屏一眼可见。
 
@@ -142,7 +145,8 @@ __DSH_RESTART_DESKTOP__.entries()     // 三个入口的开关
 - **正在跑的那一轮一定会断**，不会自动续跑；自动恢复发的是「说明现状 + 让模型判断」的消息，不是「重放那一轮」。
 - **正在被工具写入的文件可能停在半路**。插件不做回滚。
 - **后台任务 / 子 agent / teammate 全部被杀**；**定时任务在应用关闭期间不会触发**。
-- **账号浮窗那一项靠观察 DOM**。官方没给第三方留「账号菜单项」座位（`settings.launcher` 是 single 座位，整块由 `@deepseek-ai/dsh-client-ui-settings-account` 渲染，菜单项写死在它的 `items` 数组里），所以只能等菜单出现、按文案（中英两套）认出它、再追加一个同款菜单项。**认不出来就什么都不做**（代价是浮窗里少一个入口，另外两个官方座位的入口照常）。它也不能用键盘上下键走到 —— `Menu` 的键盘遍历走的是它自己的 `items` 数组。
+- **账号行右侧那个按钮靠观察 DOM**。官方没给第三方留「账号行里的按钮」座位（`sidebar.settings` 是 single 座位，整块由 `@deepseek-ai/dsh-client-ui-settings-account` 渲染），所以只能等它渲染出来、按官方写死的 `data-signed-out` + `aria-haspopup="menu"` 认出那个展开按钮，再顺它往上两层定位到账号行、把按钮插在账号行右边。判据里**没有一个哈希类名**（官方 CSS 模块类名每个构建都变）。**认不出来时不猜**：回落到官方 `sidebar.footer.action` 座位，日志与 `button().lastReason` 会写明原因。
+- **侧栏收起时不显示这个按钮**：Windows 上官方本来就把整个底栏（账号行那一片）隐藏了。收起状态下用斜杠命令 `/restart-desktop`。
 - **只支持 Windows 桌面版**。非桌面宿主（`dsh web` / headless）会明确拒绝并说明原因，绝不误杀进程。
 - **窗口几何依赖 `rcNormalPosition` 与显示器本身**：还原记的是「哪块屏 + 哪个矩形」，比对靠显示器设备名（`\\.\DISPLAY2`）。**重启期间被拔掉或换掉的屏不会凭空回来** —— 此时窗口落在系统给的那块屏上，日志与结果文件里 `onTarget: false` 会直说（脚本不会往一个不存在的坐标上挪窗口）。各屏 DPI 不同时工作区坐标与屏幕坐标可能不一致，还原结果可能偏移（日志里有 wanted / actual）。
 
@@ -154,14 +158,15 @@ __DSH_RESTART_DESKTOP__.entries()     // 三个入口的开关
 
 | 层 | 内容 |
 |---|---|
-| 单元（62 项） | 入口开关归一化、浮窗识别判据（中英、未登录、反例）、重启状态机（确认 / 警告冷却 / force / 失败重试）、宿主守卫判据、「哪些会话真的在跑」的快照判据、可信请求判定、交接目录清理、设置读写、恢复标记（新旧两种形态、TTL、跳过）与多会话恢复流程的每一条分支、`lib/geometry.ps1` 的 ASCII-only 约束 |
-| 客户端 bundle 冒烟 | 在 Node 里用假 `window` / `document` / React 真正执行 `lib/client.js`：factory 注册、`apply` 跑完、四个座位挂上、开关能关入口、`slots` 缺失时优雅退出 |
+| 单元（`npm test`，本次 67 项） | 账号行触发按钮的识别判据（严格 / 宽松 / 反例）、重启状态机（单击即执行、busy·done 期间的点击被忽略、失败可重试、非桌面版禁用）、提示文案与颜色语气、当前会话 id 的解析、宿主守卫判据、「哪些会话真的在跑」的快照判据、可信请求判定、交接目录清理、设置读写、恢复标记（新旧两种形态、TTL、跳过）与多会话恢复流程的每一条分支、`lib/geometry.ps1` 的 ASCII-only 约束 |
+| 客户端 bundle 冒烟 | 在 Node 里用假 `window` / `document` / React 真正执行 `lib/client.js`：factory 注册、`apply` 跑完、账号行已在时只挂提示浮层、账号行认不出来时观察期过后回落到官方座位、刷新后「已重启」提示被消费、诊断入口可用、`slots` 缺失时优雅退出 |
+| **账号行图标按钮** | 用假 DOM 按**官方真实结构**（`footerActions` 下面的账号动作区 → `AccountMenu.root` → `Menu` 的 span → `button[data-signed-out][aria-haspopup="menu"]`）整条跑一遍注入桥：落点就在账号行右侧、幂等、`update()` 把忙碌/提示/禁用写进节点、被官方重渲染踢出去后下一轮插回来、认不出账号行时页面上不多出任何节点、`stop` 之后不再动 DOM。结构取自解包 `app.asar` 里的 `AccountMenu` / `Menu` / `ui-sidebar` 源码 |
 | 宿主挂载与路由 | 假 ctx 真 `apply` 一遍，按真实 HTTP 形状调路由：状态契约、403 / 404 / 409 / 500、设置写入、守卫先拦、`force=1` 才交接（并核对写下的待恢复名单来自宿主实况，而不是请求里那个会话） |
 | **端到端** | 临时编译一个 WinForms 靶子程序当「应用」，跑完 `lib/helper.mjs` 全链路：捕获几何（700×500 @ 300,200）→ 结束靶子主进程（确认日志里是 `/T` 之外的方式）→ 拉起新实例（靶子第二次启动刻意用默认几何 320×220 @ 20,20）→ **独立复核**新窗口实际几何逐像素等于重启前 |
 | **多显示器（本机三块屏）** | 靶子第一次在副屏 `\\.\DISPLAY2` 上最大化 → 重新拉起的实例按默认几何落在主屏 `\\.\DISPLAY1` → helper 全链路还原 → **独立复核**窗口回到副屏、最大化矩形与重启前逐像素一致、结果里 `onTarget: true`；另一条用例手工构造「正常矩形与记录的显示器互相矛盾」的状态，验证纠偏分支（`corrected: true` / `onTarget: true`） |
 | **复现上报缺陷（对照实验）** | 同一段靶子、同一个「副屏上最大化 → 重启」场景，分别用 git HEAD 的旧脚本与本次修复后的脚本跑一遍：**旧版落到主屏 `\\.\DISPLAY1`**（正是上报的「在左上屏，重启回到笔记本屏」），新版落回 `\\.\DISPLAY2`。另：17:14 那次真实重启的会话日志显示，被打断的是后台 `session-3f255a53`（`turn/end reason: interrupted`），而插件当时瞄准的是空闲的 `session-c5744114`（`last-resume.json` 写着 `not-interrupted`）—— 与修好的判据逐条对上 |
 | helper 启动方式 | 用真正的 `DeepSeek Harness.exe` + `ELECTRON_RUN_AS_NODE=1` + `detached` 跑一次最小脚本，证明这条启动路径确实能跑起来 |
-| **安装后的活体验证** | 插件安装到 `desktop` profile 后，DSH 的 HMR 当场把两半都挂上了（无需重启）：<br>• 宿主半路由 `GET /dsh-restart-desktop/api/status` 实测返回 `{"host":"dsh-restart-desktop","version":"0.1.0","desktop":true,...}`，守卫正确读到真实服务（`有任务在跑（4 项正在生成或运行工具、1 个后台任务在跑）`，12 个在挂会话）；<br>• 客户端半三个官方座位实测已被占用：`sidebar.footer.action`（order 100）、`settings.section`（order 90）、`settings.general.item`（order 91），均为 `active: true`。<br>（账号浮窗那一项只在菜单打开时存在于 DOM 里，请打开一次账号菜单确认；控制台 `__DSH_RESTART_DESKTOP__.bridge()` 会给出 `injected` 计数。） |
+| **安装后的活体验证** | 插件安装到 `desktop` profile 后，DSH 的 HMR 当场把两半都挂上了（无需重启）：<br>• 宿主半路由 `GET /dsh-restart-desktop/api/status` 实测返回 `{"host":"dsh-restart-desktop","version":"0.1.0","desktop":true,...}`，守卫正确读到真实服务（`有任务在跑（4 项正在生成或运行工具、1 个后台任务在跑）`，12 个在挂会话）；<br>• 客户端半的注入落点在解包出来的官方源码里逐层核对过（上一行那条离线用例就是照它写的）。<br>**这一版（账号行图标按钮）还没有在真实窗口里目视确认过**：客户端半要刷新一次页面才会换上新 bundle，而刷新会打断正在进行的会话。第一次刷新后请看账号行右侧是否出现刷新图标，控制台 `__DSH_RESTART_DESKTOP__.button()` 会给出 `found` / `injected` / `lastReason`。 |
 
 **没有跑过的**（诚实说明）：**修复后的版本还没有真正重启过一次正在运行的 DSH** —— 一跑就会杀掉当前会话。上面的对照实验与多显示器用例用的都是临时编译的靶子程序，生产路径的每一段都被单独验证过，但「在本机完整重启一次 DSH（新版）」以及「真的 resume 一个 Agent 并发出一条恢复消息」这两步，仍然留给你第一次点按钮时完成（`~/.dsh/restart-desktop/` 下的 `restart-*.log` 与 `last-resume.json` 会把结果如实记下来）。
 
@@ -169,7 +174,7 @@ __DSH_RESTART_DESKTOP__.entries()     // 三个入口的开关
 
 ```powershell
 cd C:\work\my\dsh\plugins\dsh-restart-desktop
-npm run check        # bundle 一致性 + 62 项单元测试
+npm run check        # bundle 一致性 + npm test（本次 67 项）
 npm run test:e2e     # 端到端（需要 Windows 桌面会话；多显示器那两条需要在多屏机器上跑，约 20 秒）
 ```
 
@@ -182,11 +187,12 @@ index.js                 宿主半：路由、任务守卫、交接、启动后�
 lib/helper.mjs           分离 helper：重启的实际执行者
 lib/geometry.ps1         Win32 窗口几何捕获 / 还原（刻意只用 ASCII）
 lib/resume.mjs           重启后自动续上被打断会话（纯逻辑 + 服务缝）
-src/client-core.js       客户端纯逻辑：开关归一化、浮窗识别判据、状态机
-src/menu-bridge.js       账号浮窗 DOM 注入
-src/client-main.js       客户端接线：三个入口 + 设置分区
+src/client-core.js       客户端纯逻辑：账号行识别判据、重启状态机、提示文案
+src/account-button.js    账号行右侧图标按钮的 DOM 注入
+src/client-main.js       客户端接线：图标按钮 + 官方座位回落 + 提示浮层
 lib/client.js            客户端 bundle（由 build/bundle.mjs 生成，不要手改）
 build/bundle.mjs         客户端 bundle 构建（三源文件内联，无外部依赖）
+test/fake-dom.mjs        假 DOM（客户端 DOM 注入的离线测试用）
 test/                    单元 + 冒烟 + 端到端测试
 ```
 
@@ -196,4 +202,4 @@ test/                    单元 + 冒烟 + 端到端测试
 plugin_manager(action: "remove_bundle", target: "dsh-restart-desktop")
 ```
 
-宿主侧状态在 `~/.dsh/restart-desktop/`，可以直接删；浏览器里的入口开关在 localStorage 的 `dsh-restart-desktop/*` 键下。
+宿主侧状态在 `~/.dsh/restart-desktop/`，可以直接删；浏览器里只剩一个 `dsh-restart-desktop/pending-v1` 标记（重启完成后的一次性提示），一样可以直接删。
