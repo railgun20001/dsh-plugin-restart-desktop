@@ -44,7 +44,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { inspectMarker, markerSessionIds, runResume } from './lib/resume.mjs'
+import { inspectMarker, lastRequestRoute, markerSessionIds, runResume } from './lib/resume.mjs'
 
 /** 插件标识：路由前缀、日志名、客户端 id 共用。 */
 export const PLUGIN_ID = 'dsh-restart-desktop'
@@ -567,6 +567,17 @@ export function buildResumeServices(ctx, log) {
   const agents = () => (typeof ctx.get === 'function' ? ctx.get('agents') : undefined)
   const persistence = () => (typeof ctx.get === 'function' ? ctx.get('sessionPersistence') : undefined)
   const presets = () => (typeof ctx.get === 'function' ? ctx.get('agentPresets') : undefined)
+  /**
+   * 从一份 agent options / 模型选择里取出可用的 provider+model。
+   * @param {any} options 候选对象。
+   * @returns {{ provider: string, model: string } | null} 两者都齐时返回路由，否则 null。
+   */
+  const routeOf = (options) => (
+    typeof options?.provider === 'string' && options.provider !== ''
+    && typeof options?.model === 'string' && options.model !== ''
+      ? { provider: options.provider, model: options.model }
+      : null
+  )
   return {
     async header(id) {
       const service = persistence()
@@ -575,7 +586,45 @@ export function buildResumeServices(ctx, log) {
       return snapshot?.header
     },
     isLive: (id) => agents()?.get(id) !== undefined,
-    async resumeAgent(id, preset) {
+    /**
+     * 恢复这个会话该用哪条模型路由。
+     *
+     * 首选**会话自己日志里最近一次请求**的路由（与官方冷恢复
+     * `agent.session.requestHeader()` 同源，用的是官方只读句柄 `open(id, 'read')`），
+     * 退路才是部署默认模型（`@deepseek-ai/dsh-agent-default-model` 的 `currentSelection()`）。
+     * 两条都拿不到就返回 null：调用方据此**拒绝恢复** —— 见 lib/resume.mjs 模块头，
+     * 恢复出来的 Agent 缺 provider/model 会在组装提示词时直接失败，而且会一直坏着。
+     * @param {string} id 会话 id。
+     * @returns {Promise<{ provider: string, model: string } | null>} 路由或 null。
+     */
+    async route(id) {
+      const service = persistence()
+      if (service !== undefined && typeof service.open === 'function') {
+        let handle
+        try {
+          handle = await service.open(id, 'read')
+          const slice = await handle.read(0, undefined)
+          const found = lastRequestRoute(slice?.events)
+          if (found !== null) return found
+        } catch (error) {
+          log(`could not read the last model route of session ${id}: ${String((error && error.message) || error)}`)
+        } finally {
+          try {
+            await handle?.close?.()
+          } catch {
+            /* 关不上不影响恢复 */
+          }
+        }
+      }
+      try {
+        return routeOf(ctx.get('agentDefaultModel')?.currentSelection?.())
+      } catch {
+        return null
+      }
+    },
+    /** 活着的 Agent 实际拿到的路由（用于发消息前复检）。 */
+    liveRoute: (id) => routeOf(agents()?.get(id)?.options),
+    async resumeAgent(id, preset, route) {
       const service = agents()
       if (service === undefined || typeof service.resume !== 'function') throw new Error('the agents service is unavailable')
       // preset 挂载失败不该让整个恢复失败：恢复优先于完整。
@@ -589,7 +638,13 @@ export function buildResumeServices(ctx, log) {
           log(`preset "${preset}" could not be mounted; resuming without its tools: ${String((error && error.message) || error)}`)
         }
       }
-      await service.resume({ resumeSessionId: id, ...(setup === undefined ? {} : { setup }) })
+      // `agentOptions` 不能省：系统提示词的 `{{model}}` 取自 `agent.options.model`，
+      // 缺了 provider/model 的 Agent 每一轮都会在组装提示词时失败。
+      await service.resume({
+        resumeSessionId: id,
+        agentOptions: { provider: route.provider, model: route.model },
+        ...(setup === undefined ? {} : { setup }),
+      })
     },
     followup(id, message) {
       const agent = agents()?.get(id)

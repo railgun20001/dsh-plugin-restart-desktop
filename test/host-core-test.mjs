@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 
 import {
+  buildResumeServices,
   desktopTarget,
   forceRequested,
   guardReasons,
@@ -189,6 +190,64 @@ test('interruptedSessions：只列出「重启那一刻真的在跑」的会话'
   assert.deepEqual(interruptedSessions({}), [])
   assert.deepEqual(interruptedSessions({ get: (name) => (name === 'agents' ? { list: () => { throw new Error('boom') } } : undefined) }), [])
   assert.deepEqual(interruptedSessions({ get: (name) => (name === 'agents' ? { list: () => 'nope' } : undefined) }), [])
+})
+
+test('buildResumeServices：路由取自会话日志（只读句柄，用完就关），退路是部署默认模型', async () => {
+  // 恢复出来的 Agent 必须带 provider/model，否则系统提示词的 {{model}} 没有值、
+  // 每一轮都在组装提示词那一步失败 —— 这是真实重启里踩到的那个坑。
+  const opened = []
+  let closed = 0
+  const persistence = {
+    async stat() { return { header: { agentPreset: 'standard' } } },
+    async open(id, mode) {
+      opened.push({ id, mode })
+      return {
+        async read() {
+          return { events: [
+            { type: 'session', data: {} },
+            { type: 'request/header', data: { header: { config: { provider: 'wbpanel', model: 'cn:deepseek-v4.1-flash', maxTokens: 393216 } } } },
+          ] }
+        },
+        async close() { closed += 1 },
+      }
+    },
+  }
+  const agents = {
+    get: (id) => (id === 'live-with-model'
+      ? { options: { provider: 'wbpanel', model: 'cn:deepseek-v4.1-flash' } }
+      : id === 'live-without-model' ? { options: { maxTokens: 1 } } : undefined),
+  }
+  const services = buildResumeServices({
+    get: (name) => (name === 'sessionPersistence' ? persistence : name === 'agents' ? agents : undefined),
+  }, () => {})
+
+  assert.deepEqual(await services.route('session-1'), { provider: 'wbpanel', model: 'cn:deepseek-v4.1-flash' })
+  assert.deepEqual(opened, [{ id: 'session-1', mode: 'read' }], '只观察，不抢该会话的写所有权')
+  assert.equal(closed, 1, '只读句柄用完必须关掉')
+
+  // 会话日志里还没有任何请求（刚开就重启）→ 退到部署默认模型。
+  const fallback = buildResumeServices({
+    get: (name) => (name === 'sessionPersistence'
+      ? { async open() { return { async read() { return { events: [] } }, async close() {} } } }
+      : name === 'agentDefaultModel'
+        ? { currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'high' }) }
+        : undefined),
+  }, () => {})
+  assert.deepEqual(await fallback.route('session-2'), { provider: 'deepseek-official', model: 'deepseek-flash' })
+
+  // 读日志失败、也没有默认模型 → null（调用方据此拒绝恢复，不造坏 Agent）。
+  const broken = buildResumeServices({
+    get: (name) => (name === 'sessionPersistence'
+      ? { async open() { throw new Error('backend exploded') } }
+      : undefined),
+  }, () => {})
+  assert.equal(await broken.route('session-3'), null)
+  assert.equal(await buildResumeServices({ get: () => undefined }, () => {}).route('session-4'), null)
+
+  // 发消息前的复检：活 Agent 真的拿到了 provider/model 才算数。
+  assert.deepEqual(services.liveRoute('live-with-model'), { provider: 'wbpanel', model: 'cn:deepseek-v4.1-flash' })
+  assert.equal(services.liveRoute('live-without-model'), null)
+  assert.equal(services.liveRoute('not-live'), null)
 })
 
 test('guardSnapshot：安装记录也算守卫原因', () => {

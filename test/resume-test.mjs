@@ -16,21 +16,32 @@ import {
   buildResumeMessage,
   deepFreeze,
   inspectMarker,
+  lastRequestRoute,
   markerSessionIds,
   runResume,
 } from '../lib/resume.mjs'
 
 /** 造一个记录调用的假服务缝。 */
 function fakeServices(overrides = {}) {
-  const calls = { header: [], resumeAgent: [], followup: [], logs: [] }
+  const calls = { header: [], route: [], resumeAgent: [], liveRoute: [], followup: [], logs: [] }
   const services = {
     async header(id) {
       calls.header.push(id)
       return { id, agentPreset: 'standard' }
     },
     isLive: () => false,
-    async resumeAgent(id, preset) {
-      calls.resumeAgent.push({ id, preset })
+    // 会话日志里最近一次请求带的模型路由（真实实现取自 request/header）。
+    async route(id) {
+      calls.route.push(id)
+      return { provider: 'wbpanel', model: 'cn:deepseek-v4.1-flash' }
+    },
+    async resumeAgent(id, preset, route) {
+      calls.resumeAgent.push({ id, preset, route })
+    },
+    // 恢复之后活着的 Agent 实际拿到的路由。
+    liveRoute(id) {
+      calls.liveRoute.push(id)
+      return { provider: 'wbpanel', model: 'cn:deepseek-v4.1-flash' }
     },
     followup(id, message) {
       calls.followup.push({ id, message })
@@ -117,7 +128,11 @@ test('runResume：正常路径 —— 恢复会话并注入一条恢复消息', 
     preset: 'standard',
     results: [{ sessionId: 's-1', resumed: true, reason: null, preset: 'standard' }],
   })
-  assert.deepEqual(calls.resumeAgent, [{ id: 's-1', preset: 'standard' }])
+  assert.deepEqual(calls.resumeAgent, [{
+    id: 's-1',
+    preset: 'standard',
+    route: { provider: 'wbpanel', model: 'cn:deepseek-v4.1-flash' },
+  }], '恢复必须带上会话自己的模型路由（agentOptions）')
   assert.equal(calls.followup.length, 1)
   assert.equal(calls.followup[0].id, 's-1')
   assert.equal(calls.followup[0].message.role, 'user')
@@ -139,12 +154,14 @@ test('runResume：多个被打断的会话逐个恢复，一个失败不连累�
     [['s-1', true], ['gone', false], ['s-2', true]],
   )
   assert.deepEqual(calls.resumeAgent, [
-    { id: 's-1', preset: 'standard' },
-    { id: 's-2', preset: 'standard' },
+    { id: 's-1', preset: 'standard', route: { provider: 'wbpanel', model: 'cn:deepseek-v4.1-flash' } },
+    { id: 's-2', preset: 'standard', route: { provider: 'wbpanel', model: 'cn:deepseek-v4.1-flash' } },
   ])
   assert.deepEqual(calls.followup.map((entry) => entry.id), ['s-1', 's-2'])
   assert.equal(calls.followup[0].message.id === calls.followup[1].message.id, false, '每条恢复消息都要有自己的身份')
   assert.equal(calls.logs.some((line) => line.includes('resumed 2 of 3')), true, '部分成功要如实记一笔')
+  // 路由日志要能一眼看出用的是哪条路由（这是排查 {{model}} 类问题的第一现场）。
+  assert.equal(calls.logs.some((line) => line.includes('on wbpanel/cn:deepseek-v4.1-flash')), true)
 })
 
 test('runResume：一个会话都没接上时如实报告，resumed 为 false', async () => {
@@ -162,14 +179,65 @@ test('runResume：会话已经活着时只注入消息，不重复恢复', async
   const result = await runResume(services, { sessionId: 's-1', interrupted: true, at: Date.now() })
   assert.equal(result.resumed, true)
   assert.deepEqual(calls.resumeAgent, [])
+  assert.equal(calls.route.length, 0, '已经活着的会话不需要再去读路由')
   assert.equal(calls.followup.length, 1)
+})
+
+test('runResume：拿不到模型路由就不恢复（宁可留给客户端正常创建）', async () => {
+  // 恢复出来的 Agent 缺 provider/model 会在组装提示词时直接失败，而且会一直坏着。
+  const { services, calls } = fakeServices({ route: async () => null })
+  const result = await runResume(services, { sessionId: 's-1', interrupted: true, at: Date.now() })
+  assert.equal(result.resumed, false)
+  assert.equal(result.reason, 'no-route')
+  assert.deepEqual(calls.resumeAgent, [], '没有路由就不该创建 Agent')
+  assert.equal(calls.followup.length, 0, '更不该往一个必然失败的 Agent 里塞消息')
+  assert.equal(calls.logs.some((line) => line.includes('no provider/model to resume with')), true)
+})
+
+test('runResume：恢复后活 Agent 仍没有模型时不发消息', async () => {
+  // 兜底复检：真出了这种事，宁可只记日志，也不要让用户看到「本轮运行失败」。
+  const { services, calls } = fakeServices({ liveRoute: () => null })
+  const result = await runResume(services, { sessionId: 's-1', interrupted: true, at: Date.now() })
+  assert.equal(result.resumed, false)
+  assert.equal(result.reason, 'no-model')
+  assert.equal(calls.followup.length, 0)
+  assert.equal(calls.logs.some((line) => line.includes('has no provider/model, so a turn would fail prompt assembly')), true)
 })
 
 test('runResume：没有 preset 时不传 setup', async () => {
   const { services, calls } = fakeServices({ header: async () => ({ id: 's-1' }) })
   const result = await runResume(services, { sessionId: 's-1', interrupted: true, at: Date.now() })
   assert.equal(result.preset, null)
-  assert.deepEqual(calls.resumeAgent, [{ id: 's-1', preset: undefined }])
+  assert.deepEqual(calls.resumeAgent, [{
+    id: 's-1',
+    preset: undefined,
+    route: { provider: 'wbpanel', model: 'cn:deepseek-v4.1-flash' },
+  }])
+})
+
+test('lastRequestRoute：取会话日志里最近一次请求的 provider/model', () => {
+  // 真实形状：request/header 的配置在 data.header.config 下。
+  const events = [
+    { type: 'session', data: {} },
+    { type: 'request/header', data: { header: { config: { provider: 'wbpanel', model: 'global:deepseek-v4.1-flash', maxTokens: 128000 } } } },
+    { type: 'assistant/message', data: {} },
+    { type: 'request/header', data: { header: { config: { provider: 'wbpanel', model: 'cn:deepseek-v4.1-flash', maxTokens: 393216 } } } },
+    { type: 'turn/end', data: {} },
+  ]
+  assert.deepEqual(lastRequestRoute(events), { provider: 'wbpanel', model: 'cn:deepseek-v4.1-flash' }, '要取最新的那条')
+
+  // 冷启动到一半只有 request/context 时也能取到。
+  assert.deepEqual(
+    lastRequestRoute([{ type: 'request/context', data: { provider: 'p', model: 'm', contextWindow: 1000 } }]),
+    { provider: 'p', model: 'm' },
+  )
+
+  // 坏数据 / 不完整 / 什么都没有：一律 null，绝不编一个路由出来。
+  assert.equal(lastRequestRoute([{ type: 'request/header', data: { header: { config: { provider: 'p' } } } }]), null)
+  assert.equal(lastRequestRoute([{ type: 'request/context', data: { provider: '', model: 'm' } }]), null)
+  assert.equal(lastRequestRoute([{ type: 'session', data: {} }]), null)
+  assert.equal(lastRequestRoute([]), null)
+  assert.equal(lastRequestRoute(null), null)
 })
 
 test('runResume：非中断 / 过期 / 缺 id / 要求跳过 一律不动', async () => {
