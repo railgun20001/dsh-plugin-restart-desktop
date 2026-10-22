@@ -274,6 +274,8 @@ function apply(ctx) {
       actionStore.set(reduceAction(actionStore.getSnapshot(), {
         type: 'status',
         desktop: body.desktop === true,
+        // 平台能力：老宿主没有这个字段时保持 undefined，状态机按「可行」处理（向后兼容）。
+        capabilities: body.capabilities,
         guardHint: reasons.join('；'),
       }))
     } catch (error) {

@@ -98,6 +98,45 @@ test('状态机：非桌面版给出错误态并禁用按钮', () => {
   assert.match(actionAriaLabel(state), /仅在桌面版可用/)
 })
 
+test('状态机：平台不支持时禁用按钮，并把平台原因原样讲给用户', () => {
+  const reason = '当前平台（darwin）还没有实现进程控制驱动；本插件目前只支持 Windows 桌面版'
+  const state = reduceAction(createActionState(), {
+    type: 'status',
+    desktop: true,
+    capabilities: { restart: false, reason },
+  })
+
+  assert.equal(state.restartable, false)
+  assert.equal(actionDisabled(state), true)
+  assert.equal(actionTitle(state), reason, '悬停提示要说真原因，不能只说「不支持」')
+  assert.match(actionAriaLabel(state), /当前平台不支持/)
+
+  // 即使绕过按钮直接触发，状态机也不该把它当成一次正常重启。
+  const pressed = reduceAction(state, { type: 'press' })
+  assert.equal(pressed.phase, 'error')
+  assert.equal(pressed.force, false)
+  assert.match(pressed.message, /只支持 Windows 桌面版/)
+})
+
+test('状态机：老宿主不返回 capabilities 时保持旧行为（按可行处理）', () => {
+  const state = reduceAction(createActionState(), { type: 'status', desktop: true })
+  assert.equal(state.restartable, null, '缺字段不能当成「不支持」，否则升级客户端就会锁死老宿主')
+  assert.equal(actionDisabled(state), false)
+  assert.equal(actionTitle(state), '重启 DSH（保留窗口位置与大小）')
+})
+
+test('状态机：reset 保留平台能力，不会把禁用原因丢掉', () => {
+  const state = reduceAction(createActionState(), {
+    type: 'status',
+    desktop: true,
+    capabilities: { restart: false, reason: '平台不支持' },
+  })
+  const reset = reduceAction(state, { type: 'reset' })
+  assert.equal(reset.restartable, false)
+  assert.equal(reset.reason, '平台不支持')
+  assert.equal(actionDisabled(reset), true)
+})
+
 test('状态机：成功与失败', () => {
   const busy = { ...createActionState(), desktop: true, phase: 'busy' }
   const done = reduceAction(busy, { type: 'result', ok: true, text: '已排程重启' })

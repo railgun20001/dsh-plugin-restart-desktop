@@ -44,6 +44,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { platformCapabilities } from './lib/platform.mjs'
 import { inspectMarker, lastRequestRoute, markerSessionIds, runResume } from './lib/resume.mjs'
 
 /** 插件标识：路由前缀、日志名、客户端 id 共用。 */
@@ -659,6 +660,9 @@ export function buildResumeServices(ctx, log) {
  */
 export function apply(ctx, config = {}) {
   const target = desktopTarget()
+  // 「是不是桌面宿主」与「这个平台能不能重启」是两件事，分开判：
+  // macOS / Linux 的桌面版也会被认成桌面宿主，但今天还没有进程控制驱动。
+  const platform = platformCapabilities()
   const profileDir = resolveProfileDir()
   let scheduled = false
   let lastRestart = null
@@ -751,6 +755,14 @@ export function apply(ctx, config = {}) {
       return {
         status: 409,
         body: { ok: false, error: '当前不是 DeepSeek Harness 桌面版；本插件只负责重启桌面应用' },
+      }
+    }
+    // 平台能力是**硬拒绝**：与「不是桌面版」同级，force 也绕不过去 ——
+    // 这个平台上根本没有 taskkill / tasklist / PowerShell，放行只会白等 15 秒再空拉三次。
+    if (!platform.restart) {
+      return {
+        status: 409,
+        body: { ok: false, platform: platform.id, error: platform.reason },
       }
     }
     if (scheduled) {
@@ -887,6 +899,16 @@ export function apply(ctx, config = {}) {
           host: PLUGIN_ID,
           version: VERSION,
           desktop: target !== null,
+          platform: platform.id,
+          // 能力是**平台**级事实，desktop 是**宿主形态**级事实：两者分开给，
+          // 客户端才能把「不是桌面版」与「这个平台还不支持」讲成两句不同的话。
+          capabilities: {
+            restart: platform.restart,
+            launchArgs: platform.launchArgs,
+            geometry: platform.geometry,
+            alert: platform.alert,
+            reason: platform.reason,
+          },
           enabled: current.enabled,
           settings: { geometry: current.geometry, resume: current.resume },
           // 只给计数与人话，不含任何本机路径（它们会把用户名交给任何能访问这个端口的人）。
@@ -894,6 +916,9 @@ export function apply(ctx, config = {}) {
           restart: lastRestart === null ? null : {
             ok: lastRestart.ok === true,
             stage: lastRestart.stage ?? null,
+            // 失败原因（例如「平台不支持」「辅助进程没能启动」）要能直接看到，
+            // 否则用户只能看到一个内部阶段名。
+            reason: lastRestart.reason ?? null,
             finishedAt: lastRestart.finishedAt ?? null,
             geometry: lastRestart.geometry === undefined ? null : {
               captured: lastRestart.geometry?.ok === true,
@@ -970,7 +995,7 @@ export function apply(ctx, config = {}) {
     })
   }
 
-  log(`host half v${VERSION} loaded: desktop=${String(target !== null)} routes=${ROUTE_PREFIX}`)
+  log(`host half v${VERSION} loaded: desktop=${String(target !== null)} platform=${platform.id} restart=${String(target !== null && platform.restart)} routes=${ROUTE_PREFIX}`)
 }
 
 /**

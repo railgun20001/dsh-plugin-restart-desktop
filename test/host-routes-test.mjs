@@ -106,8 +106,56 @@ test('状态路由：返回版本、桌面判定、开关与守卫', async () =>
   assert.equal(result.body.desktop, false)
   assert.equal(result.body.enabled, true)
   assert.equal(result.body.entries, undefined, '客户端已经没有入口开关了')
+  // 平台能力与宿主形态是两件事：这里不是桌面宿主，但平台能力仍应如实给出。
+  assert.equal(result.body.platform, process.platform)
+  assert.equal(result.body.capabilities.restart, process.platform === 'win32')
+  assert.equal(result.body.capabilities.geometry, process.platform === 'win32' ? 'win32-powershell' : null)
+  assert.equal(result.body.capabilities.reason === null, process.platform === 'win32', '能重启时没有拒绝原因，不能时必须有')
   assert.deepEqual(result.body.settings, { geometry: true, resume: true })
   assert.equal(result.body.guard.active, false)
+})
+
+test('桌面版但平台不支持：能力如实报告，重启在动手之前就被拒绝', async () => {
+  // 模拟「macOS 上的桌面版」：桌面宿主判据成立，但这个平台还没有进程控制驱动。
+  // 期望行为是明确拒绝（409 + 原因），而不是放行后空等 15 秒、再空拉三次。
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+  const originalExecPath = Object.getOwnPropertyDescriptor(process, 'execPath')
+  const originalRunAsNode = process.env.ELECTRON_RUN_AS_NODE
+  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+  Object.defineProperty(process, 'execPath', {
+    value: '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness',
+    configurable: true,
+  })
+  process.env.ELECTRON_RUN_AS_NODE = '1'
+  try {
+    const { route } = mount()
+
+    const status = await call(route, request({ url: `${ROUTE_PREFIX}/api/status` }))
+    assert.equal(status.body.desktop, true, 'macOS 桌面版仍然是桌面宿主')
+    assert.equal(status.body.platform, 'darwin')
+    assert.equal(status.body.capabilities.restart, false)
+    assert.equal(status.body.capabilities.geometry, null)
+    assert.match(status.body.capabilities.reason, /darwin/)
+
+    const plain = await call(route, request({ method: 'POST', url: `${ROUTE_PREFIX}/api/restart` }))
+    assert.equal(plain.status, 409)
+    assert.equal(plain.body.ok, false)
+    assert.equal(plain.body.platform, 'darwin')
+    assert.match(plain.body.error, /只支持 Windows 桌面版/)
+    assert.equal(plain.body.guard, undefined, '平台不支持是硬拒绝，与「要不要继续」无关')
+
+    // force 也绕不过去：这个平台上根本没有可执行的结束/拉起手段。
+    const forced = await call(route, request({ method: 'POST', url: `${ROUTE_PREFIX}/api/restart?force=1` }))
+    assert.equal(forced.status, 409)
+    assert.match(forced.body.error, /darwin/)
+  } finally {
+    if (originalPlatform === undefined) delete process.platform
+    else Object.defineProperty(process, 'platform', originalPlatform)
+    if (originalExecPath === undefined) delete process.execPath
+    else Object.defineProperty(process, 'execPath', originalExecPath)
+    if (originalRunAsNode === undefined) delete process.env.ELECTRON_RUN_AS_NODE
+    else process.env.ELECTRON_RUN_AS_NODE = originalRunAsNode
+  }
 })
 
 test('可信请求：非回环来源一律 403', async () => {

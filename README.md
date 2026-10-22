@@ -149,7 +149,11 @@ __DSH_RESTART_DESKTOP__.action()      // 按钮此刻的动作状态
 - **后台任务 / 子 agent / teammate 全部被杀**；**定时任务在应用关闭期间不会触发**。被杀的后台任务**不会**换来一条恢复消息（对话本身没被打断），需要的话重启后自己再拉起。
 - **账号行右侧那个按钮靠观察 DOM**。官方没给第三方留「账号行里的按钮」座位（`sidebar.settings` 是 single 座位，整块由 `@deepseek-ai/dsh-client-ui-settings-account` 渲染），所以只能等它渲染出来、按官方写死的 `data-signed-out` + `aria-haspopup="menu"` 认出那个展开按钮，再顺它往上两层定位到账号行、把按钮插在账号行右边。判据里**没有一个哈希类名**（官方 CSS 模块类名每个构建都变）。**认不出来时不猜**：回落到官方 `sidebar.footer.action` 座位，日志与 `button().lastReason` 会写明原因。
 - **侧栏收起时不显示这个按钮**：Windows 上官方本来就把整个底栏（账号行那一片）隐藏了。收起状态下用斜杠命令 `/restart-desktop`。
-- **只支持 Windows 桌面版**。非桌面宿主（`dsh web` / headless）会明确拒绝并说明原因，绝不误杀进程。
+- **只支持 Windows 桌面版**，而且是**能力探测后的拒绝**，不是文档约定：
+  - 非桌面宿主（`dsh web` / headless）：`desktop: false`，重启返回 409；
+  - 非 Windows 的桌面版（macOS / Linux）：`desktop: true` 但 `capabilities.restart: false`，重启在**写交接描述之前**就返回 409，原因写明「当前平台（darwin）还没有实现进程控制驱动」；
+  - helper 里还有第二道同样的检查：万一交接描述被别的方式塞进来，它会在等待 1.5 秒之前掉头，不会空等 15 秒再空拉三次。
+  能力快照由 `lib/platform.mjs` 统一给出，`GET /dsh-restart-desktop/api/status` 的 `platform` 与 `capabilities` 字段就是它的原样输出（`restart` / `launchArgs` / `geometry` / `alert` / `reason`）。客户端按钮读同一份快照：不支持时直接禁用，悬停提示里就是 `reason` 那句话。
 - **窗口几何依赖 `rcNormalPosition` 与显示器本身**：还原记的是「哪块屏 + 哪个矩形」，比对靠显示器设备名（`\\.\DISPLAY2`）。**重启期间被拔掉或换掉的屏不会凭空回来** —— 此时窗口落在系统给的那块屏上，日志与结果文件里 `onTarget: false` 会直说（脚本不会往一个不存在的坐标上挪窗口）。各屏 DPI 不同时工作区坐标与屏幕坐标可能不一致，还原结果可能偏移（日志里有 wanted / actual）。
 
 ---
@@ -160,7 +164,7 @@ __DSH_RESTART_DESKTOP__.action()      // 按钮此刻的动作状态
 
 | 层 | 内容 |
 |---|---|
-| 单元（`npm test`，本次 67 项） | 账号行触发按钮的识别判据（严格 / 宽松 / 反例）、重启状态机（单击即执行、busy·done 期间的点击被忽略、失败可重试、非桌面版禁用）、提示文案与颜色语气、当前会话 id 的解析、宿主守卫判据、「哪些会话真的在跑」的快照判据、可信请求判定、交接目录清理、设置读写、恢复标记（新旧两种形态、TTL、跳过）与多会话恢复流程的每一条分支、`lib/geometry.ps1` 的 ASCII-only 约束 |
+| 单元（`npm test`，本次 80 项） | 账号行触发按钮的识别判据（严格 / 宽松 / 反例）、重启状态机（单击即执行、busy·done 期间的点击被忽略、失败可重试、非桌面版 / 非 Windows 平台禁用）、平台能力快照（Windows / macOS / Linux / 未知平台，注入式、可在任何机器上跑）、helper 在不支持平台上的即时拒绝、提示文案与颜色语气、当前会话 id 的解析、宿主守卫判据、「哪些会话真的在跑」的快照判据、可信请求判定、交接目录清理、设置读写、恢复标记（新旧两种形态、TTL、跳过）与多会话恢复流程的每一条分支、`lib/geometry.ps1` 的 ASCII-only 约束 |
 | 客户端 bundle 冒烟 | 在 Node 里用假 `window` / `document` / React 真正执行 `lib/client.js`：factory 注册、`apply` 跑完、账号行已在时只挂提示浮层、账号行认不出来时观察期过后回落到官方座位、刷新后「已重启」提示被消费、诊断入口可用、`slots` 缺失时优雅退出 |
 | **账号行图标按钮** | 用假 DOM 按**官方真实结构**（`footerActions` 下面的账号动作区 → `AccountMenu.root` → `Menu` 的 span → `button[data-signed-out][aria-haspopup="menu"]`）整条跑一遍注入桥：落点就在账号行右侧、幂等、`update()` 把忙碌/提示/禁用写进节点、被官方重渲染踢出去后下一轮插回来、认不出账号行时页面上不多出任何节点、`stop` 之后不再动 DOM。结构取自解包 `app.asar` 里的 `AccountMenu` / `Menu` / `ui-sidebar` 源码 |
 | 宿主挂载与路由 | 假 ctx 真 `apply` 一遍，按真实 HTTP 形状调路由：状态契约、403 / 404 / 409 / 500、设置写入、守卫先拦、`force=1` 才交接（并核对写下的待恢复名单来自宿主实况，而不是请求里那个会话） |
@@ -176,7 +180,7 @@ __DSH_RESTART_DESKTOP__.action()      // 按钮此刻的动作状态
 
 ```powershell
 cd C:\work\my\dsh\plugins\dsh-restart-desktop
-npm run check        # bundle 一致性 + npm test（本次 67 项）
+npm run check        # bundle 一致性 + npm test（本次 80 项）
 npm run test:e2e     # 端到端（需要 Windows 桌面会话；多显示器那两条需要在多屏机器上跑，约 20 秒）
 ```
 
@@ -186,6 +190,7 @@ npm run test:e2e     # 端到端（需要 Windows 桌面会话；多显示器那
 
 ```
 index.js                 宿主半：路由、任务守卫、交接、启动后自动续接会话
+lib/platform.mjs         平台能力（「本机能不能重启 / 有没有几何驱动」的唯一事实来源）
 lib/helper.mjs           分离 helper：重启的实际执行者
 lib/geometry.ps1         Win32 窗口几何捕获 / 还原（刻意只用 ASCII）
 lib/resume.mjs           重启后自动续上被打断会话（纯逻辑 + 服务缝）

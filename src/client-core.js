@@ -94,7 +94,11 @@ function sessionIdFromStorage(raw) {
 
 /**
  * 重启动作的初始状态。
- * @returns {{ phase: string, force: boolean, message: string, guardHint: string, desktop: boolean | null }} 初始状态。
+ *
+ * `desktop` 是「宿主是不是桌面版」，`restartable` 是「这个平台有没有重启驱动」——
+ * 两者分开，菜单里才能把「这里根本没有桌面版」与「桌面版有，但这个系统还不支持」
+ * 讲成两句不同的话。老宿主不返回 capabilities 时 `restartable` 保持 null（按可行处理）。
+ * @returns {{ phase: string, force: boolean, message: string, guardHint: string, desktop: boolean | null, restartable: boolean | null, reason: string }} 初始状态。
  */
 function createActionState() {
   return {
@@ -103,6 +107,8 @@ function createActionState() {
     message: '',
     guardHint: '',
     desktop: null,
+    restartable: null,
+    reason: '',
   }
 }
 
@@ -125,12 +131,17 @@ function reduceAction(state, event) {
       return {
         ...state,
         desktop: event.desktop === true ? true : event.desktop === false ? false : null,
+        restartable: typeof event.capabilities?.restart === 'boolean' ? event.capabilities.restart : null,
+        reason: typeof event.capabilities?.reason === 'string' ? event.capabilities.reason : '',
         guardHint: typeof event.guardHint === 'string' ? event.guardHint : '',
       }
     case 'press': {
       if (state.phase === 'busy' || state.phase === 'done') return state
       if (state.desktop === false) {
         return { ...state, phase: 'error', force: false, message: '当前不是桌面版，这一项只在桌面应用里可用' }
+      }
+      if (state.restartable === false) {
+        return { ...state, phase: 'error', force: false, message: state.reason || '当前平台还不支持重启桌面应用' }
       }
       return { ...state, phase: 'busy', force: true, message: '正在排程重启…' }
     }
@@ -141,7 +152,7 @@ function reduceAction(state, event) {
       return { ...state, phase: 'error', force: false, message: typeof event.text === 'string' ? event.text : '重启请求失败' }
     }
     case 'reset':
-      return { ...createActionState(), desktop: state.desktop, guardHint: state.guardHint }
+      return { ...createActionState(), desktop: state.desktop, restartable: state.restartable, reason: state.reason, guardHint: state.guardHint }
     default:
       return state
   }
@@ -156,6 +167,7 @@ function reduceAction(state, event) {
  */
 function actionTitle(state) {
   if (state.message !== '') return state.message
+  if (state.restartable === false) return state.reason || '当前平台还不支持重启桌面应用'
   if (state.guardHint !== '') return `重启 DSH：${state.guardHint}；单击仍会重启并打断它们，重启后自动续接`
   return '重启 DSH（保留窗口位置与大小）'
 }
@@ -167,6 +179,7 @@ function actionTitle(state) {
  */
 function actionAriaLabel(state) {
   if (state.desktop === false) return '重启桌面应用（仅在桌面版可用）'
+  if (state.restartable === false) return '重启桌面应用（当前平台不支持）'
   if (state.phase === 'busy') return '正在排程重启桌面应用'
   if (state.phase === 'done') return '已排程重启，页面即将断开'
   if (state.phase === 'error') return '重启失败，单击重试'
@@ -181,7 +194,7 @@ function actionAriaLabel(state) {
  * @returns {boolean} 不可用时为 true。
  */
 function actionDisabled(state) {
-  return state.phase === 'busy' || state.phase === 'done' || state.desktop === false
+  return state.phase === 'busy' || state.phase === 'done' || state.desktop === false || state.restartable === false
 }
 
 /**
