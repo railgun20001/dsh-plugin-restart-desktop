@@ -105,7 +105,7 @@ test('状态路由：返回版本、桌面判定、开关与守卫', async () =>
   // 测试跑在 node.exe 下，不是 Electron 桌面宿主。
   assert.equal(result.body.desktop, false)
   assert.equal(result.body.enabled, true)
-  assert.deepEqual(result.body.entries, { accountMenu: true, footer: true, settingsRow: true })
+  assert.equal(result.body.entries, undefined, '客户端已经没有入口开关了')
   assert.deepEqual(result.body.settings, { geometry: true, resume: true })
   assert.equal(result.body.guard.active, false)
 })

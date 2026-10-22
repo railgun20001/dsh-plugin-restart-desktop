@@ -65,7 +65,7 @@ export const HELPER_PATH = fileURLToPath(new URL('./lib/helper.mjs', import.meta
 export const DSH_HOME = process.env.DSH_HOME ?? join(homedir(), '.dsh')
 export const STATE_DIR = join(DSH_HOME, 'restart-desktop')
 
-/** 插件自己的宿主侧设置文件（客户端入口开关存在浏览器本地，不在这里）。 */
+/** 插件自己的宿主侧设置文件（还原窗口几何 / 自动续接对话两个开关）。 */
 export const SETTINGS_FILE = join(STATE_DIR, 'settings.json')
 /** 待恢复标记：排程重启时写下，下次启动时消费。 */
 export const PENDING_FILE = join(STATE_DIR, 'pending-resume.json')
@@ -91,9 +91,6 @@ export const RESUME_START_DELAY_MS = 6_000
 
 /** helper 探活的两轮等待（毫秒）：先短后长，负载高时它可能启动得慢。 */
 export const HELPER_PROBE_WAITS_MS = [300, 700]
-
-/** 客户端入口名（宿主 config 给默认值，客户端可用本机开关覆盖）。 */
-export const ENTRY_KEYS = ['accountMenu', 'footer', 'settingsRow']
 
 /** 读取本包自己的版本号（单一事实来源）。 */
 const VERSION = (() => {
@@ -165,7 +162,7 @@ export function writeSettings(patch, file = SETTINGS_FILE) {
  * 其余形状一律当作「没配」——一个坏文件不该把功能锁死。
  * @param {Record<string, unknown>} [config] 本插件那一行的 config。
  * @param {Record<string, unknown>} [stored] 设置文件内容。
- * @returns {{ enabled: boolean, geometry: boolean, resume: boolean, entries: Record<string, boolean> }} 有效开关。
+ * @returns {{ enabled: boolean, geometry: boolean, resume: boolean }} 有效开关。
  */
 export function resolveOptions(config = {}, stored = {}) {
   const pick = (key, fallback) => {
@@ -173,16 +170,10 @@ export function resolveOptions(config = {}, stored = {}) {
     if (typeof config[key] === 'boolean') return config[key]
     return fallback
   }
-  const entries = {}
-  for (const key of ENTRY_KEYS) {
-    const configured = config.entries !== null && typeof config.entries === 'object' ? config.entries[key] : undefined
-    entries[key] = typeof configured === 'boolean' ? configured : true
-  }
   return {
     enabled: pick('enabled', true),
     geometry: pick('geometry', true),
     resume: pick('resume', true),
-    entries,
   }
 }
 
@@ -664,7 +655,7 @@ export function buildResumeServices(ctx, log) {
 /**
  * 挂载插件。
  * @param {import('@deepseek-ai/cordis').Context} ctx host 上下文。
- * @param {{ enabled?: boolean, geometry?: boolean, resume?: boolean, entries?: Record<string, boolean>, stabilizeMs?: number }} [config] 本插件那一行的 config。
+ * @param {{ enabled?: boolean, geometry?: boolean, resume?: boolean, stabilizeMs?: number }} [config] 本插件那一行的 config。
  */
 export function apply(ctx, config = {}) {
   const target = desktopTarget()
@@ -897,8 +888,6 @@ export function apply(ctx, config = {}) {
           version: VERSION,
           desktop: target !== null,
           enabled: current.enabled,
-          // 每个入口的**默认**开关（config 里配的）；客户端那份还会被它自己的设置页覆盖。
-          entries: current.entries,
           settings: { geometry: current.geometry, resume: current.resume },
           // 只给计数与人话，不含任何本机路径（它们会把用户名交给任何能访问这个端口的人）。
           guard: { active: guard.active, reasons: guard.reasons, known: guard.tasks.known, sessions: guard.tasks.sessions },

@@ -69,18 +69,17 @@ test('resolveOptions：用户设置 > config > 默认', () => {
     enabled: true,
     geometry: true,
     resume: true,
-    entries: { accountMenu: true, footer: true, settingsRow: true },
   })
   assert.equal(resolveOptions({ resume: false }, { resume: true }).resume, true, '用户设置优先于 config')
   assert.equal(resolveOptions({ geometry: false }, {}).geometry, false)
   assert.equal(resolveOptions({}, { enabled: false }).enabled, false)
-  assert.deepEqual(resolveOptions({ entries: { footer: false } }, {}).entries, {
-    accountMenu: true,
-    footer: false,
-    settingsRow: true,
-  })
   // 坏形状按「没配」处理。
   assert.equal(resolveOptions({ resume: 'yes' }, { resume: 'no' }).resume, true)
+  assert.deepEqual(resolveOptions({ entries: { footer: false } }, {}), {
+    enabled: true,
+    geometry: true,
+    resume: true,
+  }, '入口开关已经不存在，配置里多写的键一律忽略')
 })
 
 test('installInProgress：认 .plugin-manager/run.json，读不动也按「有」处理', () => {
