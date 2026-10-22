@@ -117,39 +117,39 @@ test('formatResumeTime：本地时间、补零；拿不到有效时刻时 null',
 
 test('describeResume：只陈述标记里记下的事实，不写指令', () => {
   const at = new Date(2026, 9, 13, 10, 30, 36).getTime()
-  const head = '桌面版在 2026-10-13 10:30:36 重启过（dsh-restart-desktop 排程）。'
+  const head = 'The desktop app restarted at 2026-10-13 10:30:36 (scheduled by dsh-restart-desktop).'
 
   assert.equal(
     describeResume({ id: 's', running: true, queued: 0, jobs: 0 }, at),
-    `${head}\n重启时这个会话正在跑一个回合。`,
+    `${head}\nAt that moment this session was running a turn.`,
   )
   assert.equal(
     describeResume({ id: 's', running: false, queued: 3, jobs: 0 }, at),
-    `${head}\n重启时这个会话有 3 条消息在队列里，没有开始处理。`,
+    `${head}\nAt that moment this session had 3 messages queued that had not started.`,
   )
   assert.equal(
     describeResume({ id: 's', running: true, queued: 0, jobs: 2 }, at),
-    `${head}\n重启时这个会话正在跑一个回合，有 2 个后台任务在跑。`,
+    `${head}\nAt that moment this session was running a turn, and had 2 background jobs running.`,
   )
 
   // 不知道就写不知道：没有明细（旧标记）时绝不退化成「回合被切断」。
   const unknown = describeResume(null, at)
-  assert.equal(unknown, `${head}\n重启时这个会话的状态没有记录。`)
-  assert.doesNotMatch(unknown, /回合|切断|工具/, '没有证据就不能提回合、工具调用这些没发生过的事')
+  assert.equal(unknown, `${head}\nThe state of this session at that moment was not recorded.`)
+  assert.doesNotMatch(unknown, /turn|interrupted|tool/i, '没有证据就不能提回合、工具调用这些没发生过的事')
 
   // 标记被手改坏：字段类型不对、负数、字符串，一律按「没有记录」处理。
-  assert.match(describeResume({ id: 's', running: 'yes', queued: -1, jobs: 'x' }, at), /状态没有记录/)
-  assert.match(describeResume('garbage', at), /状态没有记录/)
+  assert.match(describeResume({ id: 's', running: 'yes', queued: -1, jobs: 'x' }, at), /was not recorded/)
+  assert.match(describeResume('garbage', at), /was not recorded/)
 
   // 没有可用时刻时退化成不带时间的说法，而不是编一个时间。
   assert.equal(
     describeResume({ id: 's', running: true }, null),
-    '桌面版重启过（dsh-restart-desktop 排程）。\n重启时这个会话正在跑一个回合。',
+    'The desktop app restarted (scheduled by dsh-restart-desktop).\nAt that moment this session was running a turn.',
   )
 
   // 纯报告：不出现祈使句与替模型做的判断。该怎么处置由它按会话记录自己决定。
   for (const text of [describeResume({ id: 's', running: true }, at), unknown]) {
-    assert.doesNotMatch(text, /请|不要|建议|应当|务必|继续|先核验|盲目/)
+    assert.doesNotMatch(text, /please|do not|should|must|continue|retry|verify|blindly/i)
   }
 })
 
@@ -288,9 +288,9 @@ test('runResume：恢复消息按该会话自己的明细陈述状态，不是�
 
   const texts = calls.followup.map((entry) => entry.message.content[0].text)
   assert.equal(texts.length, 3)
-  assert.match(texts[0], /重启时这个会话正在跑一个回合/)
-  assert.match(texts[1], /重启时这个会话有 2 条消息在队列里，没有开始处理/)
-  assert.match(texts[2], /重启时这个会话的状态没有记录/)
+  assert.match(texts[0], /this session was running a turn/)
+  assert.match(texts[1], /this session had 2 messages queued that had not started/)
+  assert.match(texts[2], /was not recorded/)
   assert.equal(texts.every((text) => text.includes(stamp)), true, '时间点应当写进每一条')
 })
 

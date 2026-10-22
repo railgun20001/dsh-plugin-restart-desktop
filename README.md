@@ -72,7 +72,7 @@ DeepSeek Harness.exe            ← Electron 主进程：窗口、托盘、更�
 - `ctx.agents.resume({ resumeSessionId, setup })` —— 把持久化会话恢复成活 Agent。`setup` 会把会话原本的 agent preset 重新挂上，否则恢复出来的 Agent 会丢掉它那一整套工具（bash / read / goal …）；preset 解析不到时降级为「不带 preset 工具恢复」并记日志，而不是整个失败。
 - `agent.followup(message)` —— 往收件箱排一条消息并唤醒驱动。官方 `dsh-headless` 与 `@deepseek-ai/dsh-goal-round-driver` 都走这两步。
 - 消息的 `source.kind` 刻意**不是 `'user'`**：Chat 把 `source.kind === 'user'` 的用户消息渲染成用户气泡，其余 kind 渲染成「注入的上下文行」。用自定义 kind，这条自动消息在对话里长得像系统注入 —— 它确实是。
-- 消息正文是**纯报告**，只有两句：`桌面版在 … 重启过（dsh-restart-desktop 排程）。` + `重启时这个会话正在跑一个回合。`（或有几条消息在队列 / 几个后台任务在跑；没有明细就写「状态没有记录」）。**不写「继续」「不要盲目重试」这类指令** —— 重试判据宿主已经写在会话记录里（被打断的工具调用上有一条 `ToolOutcomeUnknownError`），插件再讲一遍既重复，又可能把说错的话永久写进历史，让模型为了「对齐」它去改动本来没坏的东西。旧版标记没有 `details` 时只陈述「重启过」，不拿名单去推断这个会话当时在干什么。
+- 消息正文是**纯报告**（英文），只有两句：`The desktop app restarted at … (scheduled by dsh-restart-desktop).` + `At that moment this session was running a turn.`（或有几条消息在队列 / 几个后台任务在跑；没有明细就写 `The state of this session at that moment was not recorded.`）。用英文是因为宿主自己注入的元信息本来就是英文（被打断工具调用上的 `ToolOutcomeUnknownError`），同一层上下文保持同一种语言。**不写 "continue" / "do not retry blindly" 这类指令** —— 重试判据宿主已经写在会话记录里，插件再讲一遍既重复，又可能把说错的话永久写进历史，让模型为了「对齐」它去改动本来没坏的东西。旧版标记没有 `details` 时只陈述「重启过」，不拿名单去推断这个会话当时在干什么。
 
 **副作用面被刻意收敛到最小**（自动发消息会真的花钱、真的跑模型）：
 
