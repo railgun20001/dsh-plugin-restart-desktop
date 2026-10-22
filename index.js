@@ -384,8 +384,12 @@ export function taskSnapshot(ctx) {
  * 另一个会话点重启」会把后台那个真正被打断的会话整个漏掉。这里改成问宿主自己的实况：
  *
  *   - agent 状态是 `running`（正在生成或跑工具）；
- *   - 收件箱里有排队消息（重启会把它们一起吞掉）；
- *   - 有正在跑 / 正在停的后台任务（应用关闭时它们会被杀，任务本身也就断了）。
+ *   - 收件箱里有排队消息（重启会把它们一起吞掉）。
+ *
+ * **后台任务不算判据。** `jobs` 里 status=running 只说明有个进程还活着，不说明那一轮
+ * 对话没结束：真实事故里 `session-986cedfa` 挂着一个跑了 34 小时的 `pnpm dev`，而它的
+ * 最后一轮对话在前一天 17:20 就 turn/end 了 —— 重启杀掉的只是 dev server，把这个历史
+ * 会话唤醒一轮纯属打扰。任务数仍写进明细，仅供排障查看。
  *
  * 服务缺失、形状不认识、抛错一律返回空数组：宁可一条都不恢复，也绝不凭猜测唤醒会话
  * （自动恢复会真的花钱、真的跑模型）。顺序固定，便于日志与单测比对。
@@ -406,16 +410,18 @@ export function interruptedSessions(ctx) {
       const running = agent?.status === 'running'
       const nextTurn = Array.isArray(agent?.inbox?.nextTurn) ? agent.inbox.nextTurn.length : 0
       const nextStep = Array.isArray(agent?.inbox?.nextStep) ? agent.inbox.nextStep.length : 0
+      const queued = nextTurn + nextStep
+      // 后台任务只作明细，不作唤醒依据 —— 见函数头「后台任务不算判据」。
+      if (!running && queued === 0) continue
       let runningJobs = 0
-      // 后台任务挂在会话上（`jobs.list(agentId)`）；查不到就按 0 算，不因此把运行中的 agent 漏掉。
+      // 后台任务挂在会话上（`jobs.list(agentId)`）；查不到就按 0 算，不影响判据。
       if (jobs !== undefined && typeof jobs.list === 'function') {
         const list = jobs.list(id)
         if (Array.isArray(list)) {
           for (const job of list) if (job?.status === 'running' || job?.status === 'stopping') runningJobs += 1
         }
       }
-      if (!running && nextTurn === 0 && nextStep === 0 && runningJobs === 0) continue
-      found.push({ id, running, queued: nextTurn + nextStep, jobs: runningJobs })
+      found.push({ id, running, queued, jobs: runningJobs })
     }
     return found.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
   } catch {

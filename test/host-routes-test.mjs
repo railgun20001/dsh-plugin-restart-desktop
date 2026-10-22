@@ -20,6 +20,7 @@ const home = mkdtempSync(join(tmpdir(), 'dsrd-routes-'))
 process.env.DSH_HOME = home
 
 const { ROUTE_PREFIX, apply } = await import('../index.js')
+const { markerSessionIds } = await import('../lib/resume.mjs')
 
 /** 造一个够用的假 host ctx。 */
 function fakeContext({ agents, jobs } = {}) {
@@ -178,6 +179,11 @@ test('假装是桌面宿主：守卫先拦一次，force=1 才真的去交接', 
     assert.deepEqual(marker.sessions, ['a'])
     assert.equal(marker.interrupted, true)
     assert.equal(marker.sessionId, 'session-x', 'sessionId 保留客户端报的那个，供状态页展示')
+    assert.deepEqual(
+      markerSessionIds(marker),
+      ['a'],
+      'sessionId 只是展示值：客户端当前会话不在实况名单里，重启后不能把它一起唤醒',
+    )
   } finally {
     if (originalExecPath === undefined) delete process.execPath
     else Object.defineProperty(process, 'execPath', originalExecPath)

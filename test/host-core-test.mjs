@@ -30,6 +30,7 @@ import {
   validProfileDir,
   writeSettings,
 } from '../index.js'
+import { markerSessionIds } from '../lib/resume.mjs'
 
 /** 造一个临时目录，测试结束自动清理。 */
 function tempDir() {
@@ -162,27 +163,30 @@ test('lib/geometry.ps1 必须保持 ASCII-only（5.1 按 ANSI 读无 BOM 脚本�
 test('interruptedSessions：只列出「重启那一刻真的在跑」的会话', () => {
   // 这就是上报现场的那个形状：用户当前打开的是 codefree 会话（空闲，最后一轮 7 分钟前
   // 就完成了），真正被打断的是另一个会话里挂着的长任务。名单必须以后者为准。
+  //
+  // 另一条同现场的反例：会话里挂着一个跑了 34 小时的 `pnpm dev`（后台任务仍在 running），
+  // 但那一轮对话昨天就结束了 —— 被杀的只是 dev server，不是对话。后台任务本身不能作为
+  // 「会话被打断」的判据，否则每次重启都会把这个历史会话唤醒一轮。
   const agents = {
     list: () => [
-      { id: 'idle-current', status: 'inactive', inbox: { nextTurn: [], nextStep: [] } },
+      { id: 'idle-current', status: 'idle', inbox: { nextTurn: [], nextStep: [] } },
       { id: 'long-task', status: 'running', inbox: { nextTurn: [], nextStep: [] } },
-      { id: 'queued', status: 'inactive', inbox: { nextTurn: [{}, {}], nextStep: [] } },
-      { id: 'with-job', status: 'inactive', inbox: { nextTurn: [], nextStep: [] } },
+      { id: 'queued', status: 'idle', inbox: { nextTurn: [{}, {}], nextStep: [] } },
+      { id: 'dev-server', status: 'idle', inbox: { nextTurn: [], nextStep: [] } },
     ],
   }
   const jobs = {
-    list: (id) => (id === 'with-job' ? [{ status: 'running' }, { status: 'done' }] : []),
+    list: (id) => (id === 'dev-server' ? [{ status: 'running' }, { status: 'done' }] : []),
   }
   const ctx = { get: (name) => (name === 'agents' ? agents : name === 'jobs' ? jobs : undefined) }
 
   assert.deepEqual(interruptedSessions(ctx), [
     { id: 'long-task', running: true, queued: 0, jobs: 0 },
     { id: 'queued', running: false, queued: 2, jobs: 0 },
-    { id: 'with-job', running: false, queued: 0, jobs: 1 },
   ])
 
   // 一个都没在跑：名单为空 —— 重启空闲应用不该凭空唤醒任何会话。
-  const quiet = { get: (name) => (name === 'agents' ? { list: () => [{ id: 'a', status: 'inactive' }] } : { list: () => [] }) }
+  const quiet = { get: (name) => (name === 'agents' ? { list: () => [{ id: 'a', status: 'idle' }] } : { list: () => [] }) }
   assert.deepEqual(interruptedSessions(quiet), [])
 
   // 服务缺失 / 形状不认识 / 抛错：一律空名单（宁可一条都不恢复，也不凭猜测发消息）。
@@ -190,6 +194,38 @@ test('interruptedSessions：只列出「重启那一刻真的在跑」的会话'
   assert.deepEqual(interruptedSessions({}), [])
   assert.deepEqual(interruptedSessions({ get: (name) => (name === 'agents' ? { list: () => { throw new Error('boom') } } : undefined) }), [])
   assert.deepEqual(interruptedSessions({ get: (name) => (name === 'agents' ? { list: () => 'nope' } : undefined) }), [])
+})
+
+test('回归：13:43 那次重启的现场快照，只接真正被切断的那一个会话', () => {
+  // 现场三会话（用当时的真实短名）：
+  // - 986cedfa：最后一轮 10-21 17:20 就 turn/end，但名下有跑了 34 小时的 pnpm dev；
+  // - 8f7c6d1f：最后一轮 13:40:26 正常结束，用户 3 分钟后在它里面点了重启（客户端当前会话）；
+  // - b998923e：13:43:38 才 turn/end，重启排程那一刻确实在跑。
+  const agents = {
+    list: () => [
+      { id: 'session-986cedfa', status: 'idle', inbox: { nextTurn: [], nextStep: [] } },
+      { id: 'session-8f7c6d1f', status: 'idle', inbox: { nextTurn: [], nextStep: [] } },
+      { id: 'session-b998923e', status: 'running', inbox: { nextTurn: [], nextStep: [] } },
+    ],
+  }
+  const jobs = { list: (id) => (id === 'session-986cedfa' ? [{ status: 'running' }] : []) }
+  const ctx = { get: (name) => (name === 'agents' ? agents : name === 'jobs' ? jobs : undefined) }
+
+  const interrupted = interruptedSessions(ctx)
+  assert.deepEqual(interrupted.map((entry) => entry.id), ['session-b998923e'])
+
+  const marker = {
+    sessions: interrupted.map((entry) => entry.id),
+    details: interrupted,
+    interrupted: interrupted.length > 0,
+    sessionId: 'session-8f7c6d1f',
+    at: Date.now(),
+  }
+  assert.deepEqual(
+    markerSessionIds(marker),
+    ['session-b998923e'],
+    '两个已结束的会话（长任务那个 + 客户端当前那个）都不该被唤醒',
+  )
 })
 
 test('buildResumeServices：路由取自会话日志（只读句柄，用完就关），退路是部署默认模型', async () => {

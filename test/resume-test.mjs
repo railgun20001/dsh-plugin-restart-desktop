@@ -79,8 +79,15 @@ test('markerSessionIds：新旧两种标记形态都认，去重、保序、带�
   assert.deepEqual(markerSessionIds({ sessions: ['b', 'a', 'b'] }), ['b', 'a'])
   // 旧版：只有单个会话。
   assert.deepEqual(markerSessionIds({ sessionId: 's-1' }), ['s-1'])
-  // 两种并存：名单优先，缺的补在后面（新旧宿主混装时不漏会话）。
-  assert.deepEqual(markerSessionIds({ sessions: ['a'], sessionId: 'b' }), ['a', 'b'])
+  // 新版里 sessionId 只是给状态页展示的「客户端当前会话」，不是待恢复名单：
+  // 它可能是一个已经结束、只是还开在页面上的空闲会话（真实事故：用户在那个会话里点的重启，
+  // 于是它被无条件续了一轮）。名单存在时绝不能把它补进来。
+  assert.deepEqual(markerSessionIds({ sessions: ['a'], sessionId: 'b' }), ['a'])
+  assert.deepEqual(
+    markerSessionIds({ sessions: ['dev-server', 'real-running'], sessionId: 'idle-current' }),
+    ['dev-server', 'real-running'],
+    '客户端当前会话不在名单里就不该被恢复',
+  )
   assert.deepEqual(markerSessionIds({ sessions: ['a', ''] }), ['a'])
   assert.deepEqual(markerSessionIds({ sessionId: '' }), [])
   assert.deepEqual(markerSessionIds({}), [])
@@ -136,6 +143,22 @@ test('runResume：正常路径 —— 恢复会话并注入一条恢复消息', 
   assert.equal(calls.followup.length, 1)
   assert.equal(calls.followup[0].id, 's-1')
   assert.equal(calls.followup[0].message.role, 'user')
+})
+
+test('runResume：只恢复名单里的会话，客户端当前会话不在名单里就不碰', async () => {
+  // 真实事故形状：用户在 8f7c…（早已结束、只是还开着）里点了重启。标记的 sessions 只有
+  // 真正在跑的那个，sessionId 却指向这个空闲会话；旧读取方把它补进名单，于是它凭空续了一轮。
+  const { services, calls } = fakeServices()
+  const result = await runResume(services, {
+    sessions: ['real-running'],
+    sessionId: 'idle-current',
+    interrupted: true,
+    at: Date.now(),
+  })
+
+  assert.deepEqual(result.sessions, ['real-running'])
+  assert.deepEqual(calls.followup.map((entry) => entry.id), ['real-running'])
+  assert.equal(calls.followup.some((entry) => entry.id === 'idle-current'), false)
 })
 
 test('runResume：多个被打断的会话逐个恢复，一个失败不连累其余', async () => {
