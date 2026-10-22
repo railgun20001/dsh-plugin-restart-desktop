@@ -65,13 +65,14 @@ DeepSeek Harness.exe            ← Electron 主进程：窗口、托盘、更�
 |---|---|
 | 被打断的那一轮能续跑吗？ | **不能。** 主进程被结束、host 优雅关停，正在生成的那一轮就没了。官方自己的退出确认框也写「当前正在运行的任务将会中断」。 |
 | 会话会丢吗？ | **不会。** 会话按工作区落盘（`session.v4.jsonl.zstd`），客户端还把「当前会话」持久化在 `dsh-app://app` 的 localStorage（`dsh.sessions.current`），重启后自动回到同一个会话，历史完整。 |
-| 那「自动恢复对话」是什么？ | **把被打断的会话恢复成活 Agent，注入一条说明现状的恢复消息**，让模型自己判断哪些工具调用可以安全重试、哪些需要先核验外部状态。 |
+| 那「自动恢复对话」是什么？ | **把被打断的会话恢复成活 Agent，注入一条只陈述事实的恢复消息**（什么时候重启过、这个会话当时是什么状态），怎么接着做由模型自己按会话记录判断。 |
 
 实现走的是官方通道（源码级核对过）：
 
 - `ctx.agents.resume({ resumeSessionId, setup })` —— 把持久化会话恢复成活 Agent。`setup` 会把会话原本的 agent preset 重新挂上，否则恢复出来的 Agent 会丢掉它那一整套工具（bash / read / goal …）；preset 解析不到时降级为「不带 preset 工具恢复」并记日志，而不是整个失败。
 - `agent.followup(message)` —— 往收件箱排一条消息并唤醒驱动。官方 `dsh-headless` 与 `@deepseek-ai/dsh-goal-round-driver` 都走这两步。
 - 消息的 `source.kind` 刻意**不是 `'user'`**：Chat 把 `source.kind === 'user'` 的用户消息渲染成用户气泡，其余 kind 渲染成「注入的上下文行」。用自定义 kind，这条自动消息在对话里长得像系统注入 —— 它确实是。
+- 消息正文是**纯报告**，只有两句：`桌面版在 … 重启过（dsh-restart-desktop 排程）。` + `重启时这个会话正在跑一个回合。`（或有几条消息在队列 / 几个后台任务在跑；没有明细就写「状态没有记录」）。**不写「继续」「不要盲目重试」这类指令** —— 重试判据宿主已经写在会话记录里（被打断的工具调用上有一条 `ToolOutcomeUnknownError`），插件再讲一遍既重复，又可能把说错的话永久写进历史，让模型为了「对齐」它去改动本来没坏的东西。旧版标记没有 `details` 时只陈述「重启过」，不拿名单去推断这个会话当时在干什么。
 
 **副作用面被刻意收敛到最小**（自动发消息会真的花钱、真的跑模型）：
 
@@ -144,7 +145,7 @@ __DSH_RESTART_DESKTOP__.action()      // 按钮此刻的动作状态
 
 ## 已知边界（写清楚，免得当成 bug）
 
-- **正在跑的那一轮一定会断**，不会自动续跑；自动恢复发的是「说明现状 + 让模型判断」的消息，不是「重放那一轮」。
+- **正在跑的那一轮一定会断**，不会自动续跑；自动恢复注入的是一份事实报告，不是「重放那一轮」，也不替模型决定该怎么接着做。
 - **正在被工具写入的文件可能停在半路**。插件不做回滚。
 - **后台任务 / 子 agent / teammate 全部被杀**；**定时任务在应用关闭期间不会触发**。被杀的后台任务**不会**换来一条恢复消息（对话本身没被打断），需要的话重启后自己再拉起。
 - **账号行右侧那个按钮靠观察 DOM**。官方没给第三方留「账号行里的按钮」座位（`sidebar.settings` 是 single 座位，整块由 `@deepseek-ai/dsh-client-ui-settings-account` 渲染），所以只能等它渲染出来、按官方写死的 `data-signed-out` + `aria-haspopup="menu"` 认出那个展开按钮，再顺它往上两层定位到账号行、把按钮插在账号行右边。判据里**没有一个哈希类名**（官方 CSS 模块类名每个构建都变）。**认不出来时不猜**：回落到官方 `sidebar.footer.action` 座位，日志与 `button().lastReason` 会写明原因。
@@ -164,7 +165,7 @@ __DSH_RESTART_DESKTOP__.action()      // 按钮此刻的动作状态
 
 | 层 | 内容 |
 |---|---|
-| 单元（`npm test`，本次 80 项） | 账号行触发按钮的识别判据（严格 / 宽松 / 反例）、重启状态机（单击即执行、busy·done 期间的点击被忽略、失败可重试、非桌面版 / 非 Windows 平台禁用）、平台能力快照（Windows / macOS / Linux / 未知平台，注入式、可在任何机器上跑）、helper 在不支持平台上的即时拒绝、提示文案与颜色语气、当前会话 id 的解析、宿主守卫判据、「哪些会话真的在跑」的快照判据、可信请求判定、交接目录清理、设置读写、恢复标记（新旧两种形态、TTL、跳过）与多会话恢复流程的每一条分支、`lib/geometry.ps1` 的 ASCII-only 约束 |
+| 单元（`npm test`，本次 85 项） | 账号行触发按钮的识别判据（严格 / 宽松 / 反例）、重启状态机（单击即执行、busy·done 期间的点击被忽略、失败可重试、非桌面版 / 非 Windows 平台禁用）、平台能力快照（Windows / macOS / Linux / 未知平台，注入式、可在任何机器上跑）、helper 在不支持平台上的即时拒绝、提示文案与颜色语气、当前会话 id 的解析、宿主守卫判据、「哪些会话真的在跑」的快照判据、可信请求判定、交接目录清理、设置读写、恢复标记（新旧两种形态、TTL、跳过）与多会话恢复流程的每一条分支、`lib/geometry.ps1` 的 ASCII-only 约束 |
 | 客户端 bundle 冒烟 | 在 Node 里用假 `window` / `document` / React 真正执行 `lib/client.js`：factory 注册、`apply` 跑完、账号行已在时只挂提示浮层、账号行认不出来时观察期过后回落到官方座位、刷新后「已重启」提示被消费、诊断入口可用、`slots` 缺失时优雅退出 |
 | **账号行图标按钮** | 用假 DOM 按**官方真实结构**（`footerActions` 下面的账号动作区 → `AccountMenu.root` → `Menu` 的 span → `button[data-signed-out][aria-haspopup="menu"]`）整条跑一遍注入桥：落点就在账号行右侧、幂等、`update()` 把忙碌/提示/禁用写进节点、被官方重渲染踢出去后下一轮插回来、认不出账号行时页面上不多出任何节点、`stop` 之后不再动 DOM。结构取自解包 `app.asar` 里的 `AccountMenu` / `Menu` / `ui-sidebar` 源码 |
 | 宿主挂载与路由 | 假 ctx 真 `apply` 一遍，按真实 HTTP 形状调路由：状态契约、403 / 404 / 409 / 500、设置写入、守卫先拦、`force=1` 才交接（并核对写下的待恢复名单来自宿主实况，而不是请求里那个会话） |
@@ -180,7 +181,7 @@ __DSH_RESTART_DESKTOP__.action()      // 按钮此刻的动作状态
 
 ```powershell
 cd C:\work\my\dsh\plugins\dsh-restart-desktop
-npm run check        # bundle 一致性 + npm test（本次 80 项）
+npm run check        # bundle 一致性 + npm test（本次 85 项）
 npm run test:e2e     # 端到端（需要 Windows 桌面会话；多显示器那两条需要在多屏机器上跑，约 20 秒）
 ```
 

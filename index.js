@@ -585,6 +585,16 @@ export function buildResumeServices(ctx, log) {
     },
     isLive: (id) => agents()?.get(id) !== undefined,
     /**
+     * 这个会话是不是正在跑一个回合。
+     *
+     * 和 `isLive` 分开：一个会话可以是活的但空闲（用户刚打开、还没发消息），那种情况
+     * 注入恢复消息是对的；而正在跑的回合里再插一条「桌面版重启过」，就成了拿过期的
+     * 现场记录干扰它正在进行的工作。
+     * @param {string} id 会话 id。
+     * @returns {boolean} 正在跑时为 true。
+     */
+    isRunning: (id) => agents()?.get(id)?.status === 'running',
+    /**
      * 恢复这个会话该用哪条模型路由。
      *
      * 首选**会话自己日志里最近一次请求**的路由（与官方冷恢复

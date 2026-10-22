@@ -1,6 +1,6 @@
 {
   "name": "dsh-restart-desktop",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "DSH 桌面版一键重启：保留窗口位置/大小/最大化状态/所在显示器，可选在重启后自动续上被打断的会话",

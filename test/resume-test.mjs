@@ -2,7 +2,8 @@
  * 「重启后自动续上被打断的会话」的单元测试。
  *
  * 覆盖：标记判定（TTL / 非中断 / 缺 id / 客户端要求跳过）、新旧标记形态的解析、
- * 消息形状与不可变性、恢复流程的每一条分支（会话不存在、已经活着、恢复失败、preset
+ * 恢复消息正文（纯报告：按明细陈述状态、缺明细只陈述重启、不出现指令）、消息形状与
+ * 不可变性、恢复流程的每一条分支（会话不存在、已经活着、正在跑、恢复失败、preset
  * 有无、多会话里有一个失败）。
  * 运行：`node --test test/resume-test.mjs`
  */
@@ -15,8 +16,11 @@ import {
   RESUME_MARKER_TTL_MS,
   buildResumeMessage,
   deepFreeze,
+  describeResume,
+  formatResumeTime,
   inspectMarker,
   lastRequestRoute,
+  markerDetail,
   markerSessionIds,
   runResume,
 } from '../lib/resume.mjs'
@@ -30,6 +34,8 @@ function fakeServices(overrides = {}) {
       return { id, agentPreset: 'standard' }
     },
     isLive: () => false,
+    // 活着的 Agent 是不是正在跑一个回合；默认空闲。
+    isRunning: () => false,
     // 会话日志里最近一次请求带的模型路由（真实实现取自 request/header）。
     async route(id) {
       calls.route.push(id)
@@ -96,6 +102,65 @@ test('markerSessionIds：新旧两种标记形态都认，去重、保序、带�
   // 上限：被手改坏的标记不该让下次启动一口气唤醒几十个会话。
   const many = markerSessionIds({ sessions: Array.from({ length: 100 }, (_, index) => `s-${String(index)}`) })
   assert.equal(many.length, RESUME_MARKER_MAX_SESSIONS)
+})
+
+test('formatResumeTime：本地时间、补零；拿不到有效时刻时 null', () => {
+  // 用本地时间构造，格式化也按本地时间读：与用户界面上看到的时间一致。
+  const at = new Date(2026, 9, 13, 10, 30, 36).getTime()
+  assert.equal(formatResumeTime(at), '2026-10-13 10:30:36')
+  assert.equal(formatResumeTime(String(at)), '2026-10-13 10:30:36', '标记里的时刻可能是字符串')
+  assert.equal(formatResumeTime(Number.NaN), null)
+  assert.equal(formatResumeTime(undefined), null)
+  assert.equal(formatResumeTime(null), null)
+  assert.equal(formatResumeTime(''), null)
+})
+
+test('describeResume：只陈述标记里记下的事实，不写指令', () => {
+  const at = new Date(2026, 9, 13, 10, 30, 36).getTime()
+  const head = '桌面版在 2026-10-13 10:30:36 重启过（dsh-restart-desktop 排程）。'
+
+  assert.equal(
+    describeResume({ id: 's', running: true, queued: 0, jobs: 0 }, at),
+    `${head}\n重启时这个会话正在跑一个回合。`,
+  )
+  assert.equal(
+    describeResume({ id: 's', running: false, queued: 3, jobs: 0 }, at),
+    `${head}\n重启时这个会话有 3 条消息在队列里，没有开始处理。`,
+  )
+  assert.equal(
+    describeResume({ id: 's', running: true, queued: 0, jobs: 2 }, at),
+    `${head}\n重启时这个会话正在跑一个回合，有 2 个后台任务在跑。`,
+  )
+
+  // 不知道就写不知道：没有明细（旧标记）时绝不退化成「回合被切断」。
+  const unknown = describeResume(null, at)
+  assert.equal(unknown, `${head}\n重启时这个会话的状态没有记录。`)
+  assert.doesNotMatch(unknown, /回合|切断|工具/, '没有证据就不能提回合、工具调用这些没发生过的事')
+
+  // 标记被手改坏：字段类型不对、负数、字符串，一律按「没有记录」处理。
+  assert.match(describeResume({ id: 's', running: 'yes', queued: -1, jobs: 'x' }, at), /状态没有记录/)
+  assert.match(describeResume('garbage', at), /状态没有记录/)
+
+  // 没有可用时刻时退化成不带时间的说法，而不是编一个时间。
+  assert.equal(
+    describeResume({ id: 's', running: true }, null),
+    '桌面版重启过（dsh-restart-desktop 排程）。\n重启时这个会话正在跑一个回合。',
+  )
+
+  // 纯报告：不出现祈使句与替模型做的判断。该怎么处置由它按会话记录自己决定。
+  for (const text of [describeResume({ id: 's', running: true }, at), unknown]) {
+    assert.doesNotMatch(text, /请|不要|建议|应当|务必|继续|先核验|盲目/)
+  }
+})
+
+test('markerDetail：按 id 取明细，形态不认识就 null', () => {
+  const detail = { id: 'a', running: true, queued: 0, jobs: 0 }
+  const marker = { sessions: ['a'], details: [detail, null, 'x', { id: 3 }] }
+  assert.deepEqual(markerDetail(marker, 'a'), detail)
+  assert.equal(markerDetail(marker, 'b'), null)
+  assert.equal(markerDetail({ sessions: ['a'] }, 'a'), null, '旧版标记没有 details')
+  assert.equal(markerDetail({ details: 'nope' }, 'a'), null)
+  assert.equal(markerDetail(null, 'a'), null)
 })
 
 test('buildResumeMessage：形状正确、已冻结、source 不是 user', () => {
@@ -204,6 +269,39 @@ test('runResume：会话已经活着时只注入消息，不重复恢复', async
   assert.deepEqual(calls.resumeAgent, [])
   assert.equal(calls.route.length, 0, '已经活着的会话不需要再去读路由')
   assert.equal(calls.followup.length, 1)
+})
+
+test('runResume：恢复消息按该会话自己的明细陈述状态，不是一份通用文案', async () => {
+  const { services, calls } = fakeServices()
+  // 用「现在」：标记本身有 5 分钟 TTL，写死一个过去的日期会让整条恢复路径先被判过期。
+  const at = Date.now()
+  const stamp = formatResumeTime(at)
+  await runResume(services, {
+    sessions: ['running-one', 'queued-one', 'no-detail'],
+    interrupted: true,
+    at,
+    details: [
+      { id: 'running-one', running: true, queued: 0, jobs: 0 },
+      { id: 'queued-one', running: false, queued: 2, jobs: 0 },
+    ],
+  })
+
+  const texts = calls.followup.map((entry) => entry.message.content[0].text)
+  assert.equal(texts.length, 3)
+  assert.match(texts[0], /重启时这个会话正在跑一个回合/)
+  assert.match(texts[1], /重启时这个会话有 2 条消息在队列里，没有开始处理/)
+  assert.match(texts[2], /重启时这个会话的状态没有记录/)
+  assert.equal(texts.every((text) => text.includes(stamp)), true, '时间点应当写进每一条')
+})
+
+test('runResume：会话正在跑一个回合时一条都不发（过期现场不能插进进行中的回合）', async () => {
+  const { services, calls } = fakeServices({ isLive: () => true, isRunning: () => true })
+  const result = await runResume(services, { sessionId: 's-1', interrupted: true, at: Date.now() })
+  assert.equal(result.resumed, false)
+  assert.equal(result.reason, 'already-running')
+  assert.deepEqual(calls.resumeAgent, [])
+  assert.equal(calls.followup.length, 0)
+  assert.equal(calls.logs.some((line) => line.includes('already running a turn')), true)
 })
 
 test('runResume：拿不到模型路由就不恢复（宁可留给客户端正常创建）', async () => {
