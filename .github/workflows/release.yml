@@ -1,6 +1,13 @@
 # 发版：推 v* tag 即校验 + 发布到 npm，并创建对应的 GitHub Release。
 #
-# 前置：仓库 secrets 里配置 NPM_TOKEN（npmjs.org 的 Automation token）。
+# 认证：走 npm 的可信发布（Trusted Publishing / OIDC），仓库里**不需要**存任何 npm token。
+# 前置（一次性，在 npmjs.com 上做）：包的 Settings → Trusted publishing → GitHub Actions，
+# 填 GitHub 用户/组织、仓库名、工作流文件名（release.yml），允许 npm publish。
+# 注意 Trusted Publisher 配置必须在创建后 2 天内完成首次成功发布，否则过期。
+#
+# 幂等：若该版本在 registry 上已存在（例如首次是本地 npm publish 发的），本流程只补一个
+# GitHub Release，不会去重发同一版本（npm 不允许覆盖已发布版本）。
+#
 # provenance 需要 public 仓库 + id-token: write，二者都已满足。
 name: Release
 
@@ -15,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # 创建 GitHub Release
-      id-token: write # npm provenance
+      id-token: write # npm 可信发布（OIDC）+ provenance
     steps:
       - uses: actions/checkout@v4
 
@@ -23,8 +30,8 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false # 发布构建不用缓存
 
-      # 发布前必须绿的检查：bundle 与源码一致 + 全部单测。
       # tag 与 package.json 版本不一致时直接失败，避免发错版本号。
       - name: 校验 tag 与 package.json 版本一致
         shell: bash
@@ -36,15 +43,34 @@ jobs:
             exit 1
           fi
 
+      # 发布前必须绿的检查：bundle 与源码一致 + 全部单测。
       - name: 校验 bundle 一致性 + 单元测试
         run: npm run check
 
-      - name: 发布到 npm
+      - name: 判断该版本是否已在 registry 上
+        id: probe
+        shell: bash
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "registry 上已有 ${name}@${version}，跳过发布"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 发布到 npm（OIDC 可信发布）
+        if: steps.probe.outputs.published == 'false'
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: 创建 GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME"
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME 已存在，跳过"
+          else
+            gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME"
+          fi

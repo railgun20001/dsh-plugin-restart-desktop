@@ -220,11 +220,17 @@ test/                    单元 + 冒烟 + 端到端测试
 
 ## 发布（维护者）
 
-推 `v*` tag 即触发 `.github/workflows/release.yml`：先跑 `npm run check`，通过后 `npm publish`。仓库需要配置 secret `NPM_TOKEN`（npmjs.org 的 Automation token）。
+推 `v*` tag 即触发 `.github/workflows/release.yml`：校验 tag 与 `package.json` 版本一致 → `npm run check` → 发布 → 建 GitHub Release。
 
-本地手动发也行，注意**本机 npm 默认 registry 是镜像源**，发布必须显式走官方源（`package.json` 的 `publishConfig.registry` 已经钉住，`npm publish` 会用它）：
+**认证走 npm 可信发布（Trusted Publishing / OIDC），仓库里不存任何 npm token。** 一次性前置（在 npmjs.com 上做）：包的 Settings → Trusted publishing → GitHub Actions，填 `railgun20001`、`dsh-plugin-restart-desktop`、工作流文件名 `release.yml`，允许 `npm publish`。该配置要求**创建后 2 天内完成首次成功发布**，所以顺序是「先把包发出来 → 再配可信发布」；npm 要求 CLI ≥ 11.5.1、Node ≥ 22.14。
+
+流程是幂等的：registry 上已存在的版本不会重发，只补一个 GitHub Release —— 所以 `v1.0.0` 这个 tag 可以照推，首次发布是本地 `npm publish` 干的，CI 只负责把它挂成 Release。
+
+本地手动发（首次发布只能这么干：可信发布不支持为「还不存在的包」预配置）：
 
 ```powershell
+# 本机 npm 默认 registry 是镜像源，登录要显式指官方源；
+# package.json 的 publishConfig.registry 已钉住发布目标，publish 不必再带 --registry。
 npm login --registry=https://registry.npmjs.org/
 npm run check
 npm publish
