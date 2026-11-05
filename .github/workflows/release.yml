@@ -19,7 +19,9 @@ on:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    # 与 ci.yml 同一个平台：插件只支持 Windows，发版前的校验也在支持的平台上跑，
+    # 避免「Linux 上绿、目标平台红」。Windows runner 自带 Git Bash，bash 步骤照常可用。
+    runs-on: windows-latest
     permissions:
       contents: write # 创建 GitHub Release
       id-token: write # npm 可信发布（OIDC）+ provenance
