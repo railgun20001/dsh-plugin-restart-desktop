@@ -1,5 +1,5 @@
 /**
- * dsh-restart-desktop —— 客户端半（浏览器 bundle 的 factory 体）。
+ * dsh-plugin-restart-desktop —— 客户端半（浏览器 bundle 的 factory 体）。
  *
  * 这一版只有**一个入口**：侧栏底部账号行右侧的图标按钮（`src/account-button.js`
  * 把它注入进官方的账号行）。**单击即重启**：没有二次确认，也不因为「有任务在跑」
@@ -13,7 +13,7 @@
  * （数值取自官方 token 与官方组件）画出来，少一个包就少一类「官方改版导致整个客户端半
  * 加载失败」的失败形态。
  *
- * @module dsh-restart-desktop/client
+ * @module dsh-plugin-restart-desktop/client
  */
 
 import {
@@ -31,7 +31,7 @@ import { startAccountButtonBridge } from './account-button.js'
 const React = require('react')
 
 /** 插件 id（与 package.json 的 name 一致）。 */
-const PLUGIN_ID = 'dsh-restart-desktop'
+const PLUGIN_ID = 'dsh-plugin-restart-desktop'
 
 /** 宿主半的路由。客户端用**文档相对**路径：桌面端页面是 `dsh-app://app/`，
  * 其非静态路径会被 shell 同源转发到宿主；Web 端页面带 `<base href="./">`，

@@ -1,5 +1,5 @@
 /**
- * dsh-restart-desktop —— 把「重启 DSH」做成账号行右侧的一个图标按钮（DOM 注入）。
+ * dsh-plugin-restart-desktop —— 把「重启 DSH」做成账号行右侧的一个图标按钮（DOM 注入）。
  *
  * ## 为什么必须靠观察 DOM
  *
@@ -31,13 +31,13 @@
  * - **账号行没了它就不显示**：Windows 上侧栏收起时官方本来就把整个底栏隐藏
  *   （`[data-windows-titlebar] .collapsed .footArea{display:none}`），此时改用斜杠命令。
  *
- * @module dsh-restart-desktop/account-button
+ * @module dsh-plugin-restart-desktop/account-button
  */
 
 import { isAccountRowButton, isAccountTrigger } from './client-core.js'
 
 /** 标记属性：用于自检与测试定位。 */
-const BUTTON_MARKER = 'data-dsh-restart-desktop-button'
+const BUTTON_MARKER = 'data-dsh-plugin-restart-desktop-button'
 
 /** 我们的按钮类名（样式由 client-main 注入的 CSS 提供）。 */
 const BUTTON_CLASS = 'dsrd-acct-btn'

@@ -1,0 +1,50 @@
+# 发版：推 v* tag 即校验 + 发布到 npm，并创建对应的 GitHub Release。
+#
+# 前置：仓库 secrets 里配置 NPM_TOKEN（npmjs.org 的 Automation token）。
+# provenance 需要 public 仓库 + id-token: write，二者都已满足。
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 创建 GitHub Release
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # 发布前必须绿的检查：bundle 与源码一致 + 全部单测。
+      # tag 与 package.json 版本不一致时直接失败，避免发错版本号。
+      - name: 校验 tag 与 package.json 版本一致
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag v$tag 与 package.json 版本 $pkg 不一致" >&2
+            exit 1
+          fi
+
+      - name: 校验 bundle 一致性 + 单元测试
+        run: npm run check
+
+      - name: 发布到 npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME"

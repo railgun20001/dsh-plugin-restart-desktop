@@ -1,0 +1,37 @@
+# 持续集成：bundle 一致性 + 单元/冒烟测试。
+#
+# 为什么跑在 windows-latest：这个插件只支持 Windows 桌面版，宿主的真实形状
+# （路径分隔符、PowerShell、helper 的启动方式）都在 Windows 上；用同一个平台
+# 跑测试，避免「Linux 上绿、Windows 上红」的假通过。
+#
+# 端到端（npm run test:e2e）不在 CI 里跑：它要编译一个 WinForms 靶子程序、
+# 需要真实的交互式桌面会话才能拿到窗口几何，GitHub 托管的 runner 没有。
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      # 无依赖需要安装：本插件零运行时依赖、零开发依赖，测试只用 node:test。
+      - name: 校验 lib/client.js 与源码一致
+        run: node build/bundle.mjs --check
+
+      - name: 单元测试
+        run: npm test

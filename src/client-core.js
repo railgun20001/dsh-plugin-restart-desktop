@@ -1,5 +1,5 @@
 /**
- * dsh-restart-desktop —— 客户端半的纯逻辑层。
+ * dsh-plugin-restart-desktop —— 客户端半的纯逻辑层。
  *
  * 这里刻意不碰 DOM、不碰 React、不碰 fetch：重启动作的状态机、当前会话 id 的解析、
  * 「哪个按钮是账号行触发按钮」的识别判据都放在这里，因此可以完全离线单测
@@ -9,7 +9,7 @@
  * 这一版的形态是刻意的简单：**只有一个入口**（侧栏底部账号行右侧的图标按钮），
  * **单击即重启**（没有二次确认，也不因为「有任务在跑」要求再点一次）。
  *
- * @module dsh-restart-desktop/client-core
+ * @module dsh-plugin-restart-desktop/client-core
  */
 
 /**

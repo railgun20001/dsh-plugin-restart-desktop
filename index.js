@@ -1,5 +1,5 @@
 /**
- * dsh-restart-desktop —— 宿主半。
+ * dsh-plugin-restart-desktop —— 宿主半。
  *
  * ## 为什么需要这个插件
  *
@@ -35,7 +35,7 @@
  * 同一时刻只允许一次重启交接。有任务在跑时**只警告、不硬拦** —— 硬拦会在 helper
  * 卡住时把重启按钮永久锁死，而解除它恰恰需要重启应用。
  *
- * @module dsh-restart-desktop
+ * @module dsh-plugin-restart-desktop
  */
 
 import { spawn } from 'node:child_process'
@@ -48,7 +48,7 @@ import { platformCapabilities } from './lib/platform.mjs'
 import { inspectMarker, lastRequestRoute, markerSessionIds, runResume } from './lib/resume.mjs'
 
 /** 插件标识：路由前缀、日志名、客户端 id 共用。 */
-export const PLUGIN_ID = 'dsh-restart-desktop'
+export const PLUGIN_ID = 'dsh-plugin-restart-desktop'
 
 /** Cordis 插件名（诊断与 patch 行定位用）。 */
 export const name = 'restart-desktop'
@@ -56,8 +56,8 @@ export const name = 'restart-desktop'
 /** 硬依赖：没有 HTTP carrier 就没有路由，客户端半无从发起重启。 */
 export const inject = ['webServer']
 
-/** 本插件拥有的路由前缀（客户端用文档相对路径 `dsh-restart-desktop/...` 访问）。 */
-export const ROUTE_PREFIX = '/dsh-restart-desktop'
+/** 本插件拥有的路由前缀（客户端用文档相对路径 `dsh-plugin-restart-desktop/...` 访问）。 */
+export const ROUTE_PREFIX = '/dsh-plugin-restart-desktop'
 
 /** 分离 helper 的绝对路径。 */
 export const HELPER_PATH = fileURLToPath(new URL('./lib/helper.mjs', import.meta.url))

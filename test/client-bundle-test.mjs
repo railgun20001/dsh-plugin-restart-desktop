@@ -96,7 +96,7 @@ function loadBundle(options = {}) {
     fakeRequire,
   )
   assert.notEqual(captured, null, 'bundle 必须调用 window.__ModuleLoader__.load')
-  assert.equal(captured.id, 'dsh-restart-desktop', 'factory id 必须等于包名')
+  assert.equal(captured.id, 'dsh-plugin-restart-desktop', 'factory id 必须等于包名')
   return { ...captured.factory(fakeRequire), id: captured.id }
 }
 
@@ -143,7 +143,7 @@ test('apply：账号行已经在了 → 只挂提示浮层，不挂官方座位�
   const { ctx, registrations } = fakeContext()
   loaded.apply(ctx)
 
-  const injected = doc.body.querySelectorAll('button[data-dsh-restart-desktop-button="1"]')
+  const injected = doc.body.querySelectorAll('button[data-dsh-plugin-restart-desktop-button="1"]')
   assert.equal(injected.length, 1, '账号行右侧应当已经出现图标按钮')
 
   await afterGrace()
@@ -184,11 +184,11 @@ test('apply：没有 slots 服务时优雅退出，不抛错', () => {
 
 test('apply：页面重载后提示一次「已重启」，并把标记消费掉', () => {
   const localStorageShim = fakeLocalStorage({
-    'dsh-restart-desktop/pending-v1': JSON.stringify({ at: Date.now(), sessionId: 'session-1' }),
+    'dsh-plugin-restart-desktop/pending-v1': JSON.stringify({ at: Date.now(), sessionId: 'session-1' }),
   })
   const loaded = loadBundle({ localStorage: localStorageShim })
   loaded.apply(fakeContext().ctx)
-  assert.equal(localStorageShim.store.has('dsh-restart-desktop/pending-v1'), false, '标记必须被消费，否则每次刷新都提示')
+  assert.equal(localStorageShim.store.has('dsh-plugin-restart-desktop/pending-v1'), false, '标记必须被消费，否则每次刷新都提示')
 })
 
 test('诊断入口：暴露版本与账号行按钮状态', () => {

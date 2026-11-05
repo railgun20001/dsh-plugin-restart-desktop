@@ -5,7 +5,7 @@
  * 父子关系、`insertBefore`、事件监听、以及 `tag[attr]` / `tag[attr="v"]` 形态的查询。
  * 这里如实实现它们，就能在没有浏览器的环境里把注入路径整条跑一遍。
  *
- * @module dsh-restart-desktop/test/fake-dom
+ * @module dsh-plugin-restart-desktop/test/fake-dom
  */
 
 /** 一个假元素。 */

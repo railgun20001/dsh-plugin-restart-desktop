@@ -1,9 +1,31 @@
 {
-  "name": "dsh-restart-desktop",
-  "version": "0.4.0",
-  "private": true,
+  "name": "dsh-plugin-restart-desktop",
+  "version": "1.0.0",
   "type": "module",
   "description": "DSH 桌面版一键重启：保留窗口位置/大小/最大化状态/所在显示器，可选在重启后自动续上被打断的会话",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis-plugin",
+    "restart",
+    "desktop",
+    "electron",
+    "windows"
+  ],
+  "author": {
+    "name": "李晨雨",
+    "url": "https://github.com/railgun20001"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/railgun20001/dsh-plugin-restart-desktop.git"
+  },
+  "homepage": "https://github.com/railgun20001/dsh-plugin-restart-desktop#readme",
+  "bugs": {
+    "url": "https://github.com/railgun20001/dsh-plugin-restart-desktop/issues"
+  },
   "meta": {
     "title": "重启桌面版（保窗口 · 续对话）",
     "description": "宿主半排程一次分离重启（只结束 Electron 主进程，让 host 优雅落盘），helper 在端口释放后拉起新实例并用 Win32 逐像素还原窗口几何（含所在显示器）；可选把重启那一刻真正在跑的会话逐个恢复成活 Agent 并各注入一条恢复消息。"
@@ -16,22 +38,22 @@
     "./client": {
       "default": "./lib/client.js"
     },
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
     "lib",
-    "src",
-    "build",
-    "test",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "node build/bundle.mjs",
     "test": "node --test test/client-core-test.mjs test/account-button-test.mjs test/client-bundle-test.mjs test/host-core-test.mjs test/host-routes-test.mjs test/resume-test.mjs test/platform-test.mjs test/helper-core-test.mjs",
     "test:e2e": "node --test test/helper-e2e.mjs",
-    "check": "node build/bundle.mjs --check && npm test"
+    "check": "node build/bundle.mjs --check && npm test",
+    "prepublishOnly": "npm run check"
   },
   "dsh": {
     "bundle": {
@@ -46,7 +68,11 @@
     "manifestVersion": 1
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "dsh": ">=0.2.0-rc.1"
   },
-  "license": "MIT"
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
 }

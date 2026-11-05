@@ -315,7 +315,7 @@ test('trustedRequest：同源、桌面壳转发、以及各种不可信形态', 
 })
 
 test('parseQuery / forceRequested', () => {
-  assert.equal(parseQuery('/dsh-restart-desktop/api/restart?session=s-1&force=1').get('session'), 's-1')
+  assert.equal(parseQuery('/dsh-plugin-restart-desktop/api/restart?session=s-1&force=1').get('session'), 's-1')
   assert.equal(forceRequested('/x?force=1'), true)
   assert.equal(forceRequested('/x?force=0'), false)
   assert.equal(forceRequested('/x'), false)

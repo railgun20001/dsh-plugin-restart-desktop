@@ -100,7 +100,7 @@ test('状态路由：返回版本、桌面判定、开关与守卫', async () =>
   const { route } = mount()
   const result = await call(route, request({ url: `${ROUTE_PREFIX}/api/status` }))
   assert.equal(result.status, 200)
-  assert.equal(result.body.host, 'dsh-restart-desktop')
+  assert.equal(result.body.host, 'dsh-plugin-restart-desktop')
   assert.equal(typeof result.body.version, 'string')
   // 测试跑在 node.exe 下，不是 Electron 桌面宿主。
   assert.equal(result.body.desktop, false)
@@ -265,7 +265,7 @@ test('ping / 未知动作 / 方法不匹配', async () => {
   const { route } = mount()
   const ping = await call(route, request({ method: 'POST', url: `${ROUTE_PREFIX}/api/ping` }))
   assert.equal(ping.status, 200)
-  assert.equal(ping.body.host, 'dsh-restart-desktop')
+  assert.equal(ping.body.host, 'dsh-plugin-restart-desktop')
 
   const unknown = await call(route, request({ url: `${ROUTE_PREFIX}/api/nope` }))
   assert.equal(unknown.status, 404)

@@ -117,7 +117,7 @@ test('formatResumeTime：本地时间、补零；拿不到有效时刻时 null',
 
 test('describeResume：只陈述标记里记下的事实，不写指令', () => {
   const at = new Date(2026, 9, 13, 10, 30, 36).getTime()
-  const head = 'The desktop app restarted at 2026-10-13 10:30:36 (scheduled by dsh-restart-desktop).'
+  const head = 'The desktop app restarted at 2026-10-13 10:30:36 (scheduled by dsh-plugin-restart-desktop).'
 
   assert.equal(
     describeResume({ id: 's', running: true, queued: 0, jobs: 0 }, at),
@@ -144,7 +144,7 @@ test('describeResume：只陈述标记里记下的事实，不写指令', () => 
   // 没有可用时刻时退化成不带时间的说法，而不是编一个时间。
   assert.equal(
     describeResume({ id: 's', running: true }, null),
-    'The desktop app restarted (scheduled by dsh-restart-desktop).\nAt that moment this session was running a turn.',
+    'The desktop app restarted (scheduled by dsh-plugin-restart-desktop).\nAt that moment this session was running a turn.',
   )
 
   // 纯报告：不出现祈使句与替模型做的判断。该怎么处置由它按会话记录自己决定。
@@ -164,12 +164,12 @@ test('markerDetail：按 id 取明细，形态不认识就 null', () => {
 })
 
 test('buildResumeMessage：形状正确、已冻结、source 不是 user', () => {
-  const message = buildResumeMessage('继续吧', 'dsh-restart-desktop')
+  const message = buildResumeMessage('继续吧', 'dsh-plugin-restart-desktop')
   assert.equal(message.role, 'user')
   assert.equal(typeof message.id, 'string')
   assert.equal(message.id.length > 0, true)
   assert.deepEqual(message.content, [{ type: 'text', text: '继续吧' }])
-  assert.deepEqual(message.source, { kind: 'desktop-restart', plugin: 'dsh-restart-desktop' })
+  assert.deepEqual(message.source, { kind: 'desktop-restart', plugin: 'dsh-plugin-restart-desktop' })
   assert.notEqual(message.source.kind, 'user', 'source 必须是自定义 kind，Chat 才会渲染成「注入的上下文行」')
   assert.equal(Object.isFrozen(message), true)
   assert.equal(Object.isFrozen(message.content), true)

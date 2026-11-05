@@ -1,5 +1,5 @@
 /**
- * dsh-restart-desktop 客户端 bundle 构建脚本。
+ * dsh-plugin-restart-desktop 客户端 bundle 构建脚本。
  *
  * 产物 `lib/client.js` 是**手写协议**的浏览器 bundle：DSH 的客户端模块系统
  * （@deepseek-ai/dsh-client-modules）用 classic `<script>` 加载每个插件的客户端半，
@@ -17,7 +17,7 @@
  *   node build/bundle.mjs            # 生成 lib/client.js
  *   node build/bundle.mjs --check    # 只校验产物是当前源码的等价生成（CI 用）
  *
- * @module dsh-restart-desktop/build
+ * @module dsh-plugin-restart-desktop/build
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
@@ -28,7 +28,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(HERE, '..')
 
 /** 包名：注册到 `__ModuleLoader__` 的 id，必须与 package.json 的 name 一致。 */
-const PACKAGE_NAME = 'dsh-restart-desktop'
+const PACKAGE_NAME = 'dsh-plugin-restart-desktop'
 
 /** 按依赖顺序内联的源文件。 */
 const MODULES = [
@@ -89,7 +89,7 @@ function build() {
   const version = typeof pkg.version === 'string' && pkg.version !== '' ? pkg.version : 'unknown'
 
   const header = `/**
- * dsh-restart-desktop —— 客户端 bundle（由 build/bundle.mjs 生成，请不要手改）
+ * dsh-plugin-restart-desktop —— 客户端 bundle（由 build/bundle.mjs 生成，请不要手改）
  *
  * 内联自：
  *   - src/client-core.js     纯逻辑：账号行识别判据、重启状态机、提示文案

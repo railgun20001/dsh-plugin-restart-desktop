@@ -1,4 +1,8 @@
-# dsh-restart-desktop
+# dsh-plugin-restart-desktop
+
+[![npm version](https://img.shields.io/npm/v/dsh-plugin-restart-desktop.svg)](https://www.npmjs.com/package/dsh-plugin-restart-desktop)
+[![license](https://img.shields.io/npm/l/dsh-plugin-restart-desktop.svg)](LICENSE)
+[![CI](https://github.com/railgun20001/dsh-plugin-restart-desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/railgun20001/dsh-plugin-restart-desktop/actions/workflows/ci.yml)
 
 DSH 桌面版（DeepSeek Harness Electron 壳）的**一键重启**插件：**保留窗口位置、大小、最大化状态与所在显示器**，可选在重启后**自动续上被打断的会话**（不只是你当前打开的那个）。
 
@@ -72,7 +76,7 @@ DeepSeek Harness.exe            ← Electron 主进程：窗口、托盘、更�
 - `ctx.agents.resume({ resumeSessionId, setup })` —— 把持久化会话恢复成活 Agent。`setup` 会把会话原本的 agent preset 重新挂上，否则恢复出来的 Agent 会丢掉它那一整套工具（bash / read / goal …）；preset 解析不到时降级为「不带 preset 工具恢复」并记日志，而不是整个失败。
 - `agent.followup(message)` —— 往收件箱排一条消息并唤醒驱动。官方 `dsh-headless` 与 `@deepseek-ai/dsh-goal-round-driver` 都走这两步。
 - 消息的 `source.kind` 刻意**不是 `'user'`**：Chat 把 `source.kind === 'user'` 的用户消息渲染成用户气泡，其余 kind 渲染成「注入的上下文行」。用自定义 kind，这条自动消息在对话里长得像系统注入 —— 它确实是。
-- 消息正文是**纯报告**（英文），只有两句：`The desktop app restarted at … (scheduled by dsh-restart-desktop).` + `At that moment this session was running a turn.`（或有几条消息在队列 / 几个后台任务在跑；没有明细就写 `The state of this session at that moment was not recorded.`）。用英文是因为宿主自己注入的元信息本来就是英文（被打断工具调用上的 `ToolOutcomeUnknownError`），同一层上下文保持同一种语言。**不写 "continue" / "do not retry blindly" 这类指令** —— 重试判据宿主已经写在会话记录里，插件再讲一遍既重复，又可能把说错的话永久写进历史，让模型为了「对齐」它去改动本来没坏的东西。旧版标记没有 `details` 时只陈述「重启过」，不拿名单去推断这个会话当时在干什么。
+- 消息正文是**纯报告**（英文），只有两句：`The desktop app restarted at … (scheduled by dsh-plugin-restart-desktop).` + `At that moment this session was running a turn.`（或有几条消息在队列 / 几个后台任务在跑；没有明细就写 `The state of this session at that moment was not recorded.`）。用英文是因为宿主自己注入的元信息本来就是英文（被打断工具调用上的 `ToolOutcomeUnknownError`），同一层上下文保持同一种语言。**不写 "continue" / "do not retry blindly" 这类指令** —— 重试判据宿主已经写在会话记录里，插件再讲一遍既重复，又可能把说错的话永久写进历史，让模型为了「对齐」它去改动本来没坏的东西。旧版标记没有 `details` 时只陈述「重启过」，不拿名单去推断这个会话当时在干什么。
 
 **副作用面被刻意收敛到最小**（自动发消息会真的花钱、真的跑模型）：
 
@@ -89,23 +93,31 @@ DeepSeek Harness.exe            ← Electron 主进程：窗口、托盘、更�
 
 ## 安装
 
-**本机已经装好了**（`link:` 方式，装进 `desktop` profile）：
+从 npm 装（推荐）：
 
 ```powershell
-plugin_manager(action: "install_bundle", target: "link:C:\work\my\dsh\plugins\dsh-restart-desktop")
+plugin_manager(action: "install_bundle", target: "dsh-plugin-restart-desktop")
+```
+
+或者直接写进 profile —— `bundles` 与 `dependencies` 两处都要有：
+
+```jsonc
+// ~/.dsh/profiles/desktop/package.json
+"dsh": { "profile": { "bundles": [ /* … */ "dsh-plugin-restart-desktop" ] } },
+"dependencies": { "dsh-plugin-restart-desktop": "^1.0.0" }
+```
+
+开发本仓库时用 `link:` 指向本地目录，改完代码立即生效：
+
+```powershell
+plugin_manager(action: "install_bundle", target: "link:C:\work\my\dsh\plugins\dsh-plugin-restart-desktop")
 ```
 
 安装后 DSH 的 HMR 会当场把两半挂上，**不需要重启**（实测：安装后宿主路由立即应答，客户端半的图标按钮立即出现在账号行右侧）。如果入口没出现，刷新一次页面即可。
 
-在别的机器上装：
-
-```jsonc
-// ~/.dsh/profiles/desktop/package.json
-"dsh": { "profile": { "bundles": [ /* … */ "dsh-restart-desktop" ] } },
-"dependencies": { "dsh-restart-desktop": "link:C:/work/my/dsh/plugins/dsh-restart-desktop" }
-```
-
 正常情况下 HMR 会当场把两半挂上，不必重启。只有在没开 HMR 的组合里，宿主半才要等 **DSH 下次启动**；客户端半每次刷新页面重新取。两半版本不一致时，控制台 `__DSH_RESTART_DESKTOP__.status().version` 是宿主版本、`__DSH_RESTART_DESKTOP__.version` 是客户端版本。
+
+> 只支持 **Windows 桌面版**（能力探测不通过会明确拒绝，见「已知边界」）。宿主版本要求见 `package.json` 的 `engines.dsh`，作者本机实测于 `0.2.1-rc.5`。
 
 ---
 
@@ -124,7 +136,7 @@ plugin_manager(action: "install_bundle", target: "link:C:\work\my\dsh\plugins\ds
 { "geometry": true, "resume": true }   // 还原窗口几何 / 自动续接被打断的会话
 ```
 
-宿主侧设置文件 `~/.dsh/restart-desktop/settings.json` 优先于 config；也可以 `POST /dsh-restart-desktop/api/settings?geometry=0&resume=0` 改。
+宿主侧设置文件 `~/.dsh/restart-desktop/settings.json` 优先于 config；也可以 `POST /dsh-plugin-restart-desktop/api/settings?geometry=0&resume=0` 改。
 
 ### 排障
 
@@ -154,7 +166,7 @@ __DSH_RESTART_DESKTOP__.action()      // 按钮此刻的动作状态
   - 非桌面宿主（`dsh web` / headless）：`desktop: false`，重启返回 409；
   - 非 Windows 的桌面版（macOS / Linux）：`desktop: true` 但 `capabilities.restart: false`，重启在**写交接描述之前**就返回 409，原因写明「当前平台（darwin）还没有实现进程控制驱动」；
   - helper 里还有第二道同样的检查：万一交接描述被别的方式塞进来，它会在等待 1.5 秒之前掉头，不会空等 15 秒再空拉三次。
-  能力快照由 `lib/platform.mjs` 统一给出，`GET /dsh-restart-desktop/api/status` 的 `platform` 与 `capabilities` 字段就是它的原样输出（`restart` / `launchArgs` / `geometry` / `alert` / `reason`）。客户端按钮读同一份快照：不支持时直接禁用，悬停提示里就是 `reason` 那句话。
+  能力快照由 `lib/platform.mjs` 统一给出，`GET /dsh-plugin-restart-desktop/api/status` 的 `platform` 与 `capabilities` 字段就是它的原样输出（`restart` / `launchArgs` / `geometry` / `alert` / `reason`）。客户端按钮读同一份快照：不支持时直接禁用，悬停提示里就是 `reason` 那句话。
 - **窗口几何依赖 `rcNormalPosition` 与显示器本身**：还原记的是「哪块屏 + 哪个矩形」，比对靠显示器设备名（`\\.\DISPLAY2`）。**重启期间被拔掉或换掉的屏不会凭空回来** —— 此时窗口落在系统给的那块屏上，日志与结果文件里 `onTarget: false` 会直说（脚本不会往一个不存在的坐标上挪窗口）。各屏 DPI 不同时工作区坐标与屏幕坐标可能不一致，还原结果可能偏移（日志里有 wanted / actual）。
 
 ---
@@ -173,17 +185,19 @@ __DSH_RESTART_DESKTOP__.action()      // 按钮此刻的动作状态
 | **多显示器（本机三块屏）** | 靶子第一次在副屏 `\\.\DISPLAY2` 上最大化 → 重新拉起的实例按默认几何落在主屏 `\\.\DISPLAY1` → helper 全链路还原 → **独立复核**窗口回到副屏、最大化矩形与重启前逐像素一致、结果里 `onTarget: true`；另一条用例手工构造「正常矩形与记录的显示器互相矛盾」的状态，验证纠偏分支（`corrected: true` / `onTarget: true`） |
 | **复现上报缺陷（对照实验）** | 同一段靶子、同一个「副屏上最大化 → 重启」场景，分别用 git HEAD 的旧脚本与本次修复后的脚本跑一遍：**旧版落到主屏 `\\.\DISPLAY1`**（正是上报的「在左上屏，重启回到笔记本屏」），新版落回 `\\.\DISPLAY2`。另：17:14 那次真实重启的会话日志显示，被打断的是后台 `session-3f255a53`（`turn/end reason: interrupted`），而插件当时瞄准的是空闲的 `session-c5744114`（`last-resume.json` 写着 `not-interrupted`）—— 与修好的判据逐条对上 |
 | helper 启动方式 | 用真正的 `DeepSeek Harness.exe` + `ELECTRON_RUN_AS_NODE=1` + `detached` 跑一次最小脚本，证明这条启动路径确实能跑起来 |
-| **安装后的活体验证** | 插件安装到 `desktop` profile 后，DSH 的 HMR 当场把两半都挂上了（无需重启）：<br>• 宿主半路由 `GET /dsh-restart-desktop/api/status` 实测返回 `{"host":"dsh-restart-desktop","version":"0.1.0","desktop":true,...}`，守卫正确读到真实服务（`有任务在跑（4 项正在生成或运行工具、1 个后台任务在跑）`，12 个在挂会话）；<br>• 客户端半的注入落点在解包出来的官方源码里逐层核对过（上一行那条离线用例就是照它写的）。<br>**这一版（账号行图标按钮）还没有在真实窗口里目视确认过**：客户端半要刷新一次页面才会换上新 bundle，而刷新会打断正在进行的会话。第一次刷新后请看账号行右侧是否出现刷新图标，控制台 `__DSH_RESTART_DESKTOP__.button()` 会给出 `found` / `injected` / `lastReason`。 |
+| **安装后的活体验证** | 插件安装到 `desktop` profile 后，DSH 的 HMR 当场把两半都挂上了（无需重启）：<br>• 宿主半路由 `GET /dsh-plugin-restart-desktop/api/status` 实测返回 `{"host":"dsh-plugin-restart-desktop","version":"0.1.0","desktop":true,...}`，守卫正确读到真实服务（`有任务在跑（4 项正在生成或运行工具、1 个后台任务在跑）`，12 个在挂会话）；<br>• 客户端半的注入落点在解包出来的官方源码里逐层核对过（上一行那条离线用例就是照它写的）。<br>**这一版（账号行图标按钮）还没有在真实窗口里目视确认过**：客户端半要刷新一次页面才会换上新 bundle，而刷新会打断正在进行的会话。第一次刷新后请看账号行右侧是否出现刷新图标，控制台 `__DSH_RESTART_DESKTOP__.button()` 会给出 `found` / `injected` / `lastReason`。 |
 
 **没有跑过的**（诚实说明）：**修复后的版本还没有真正重启过一次正在运行的 DSH** —— 一跑就会杀掉当前会话。上面的对照实验与多显示器用例用的都是临时编译的靶子程序，生产路径的每一段都被单独验证过，但「在本机完整重启一次 DSH（新版）」以及「真的 resume 一个 Agent 并发出一条恢复消息」这两步，仍然留给你第一次点按钮时完成（`~/.dsh/restart-desktop/` 下的 `restart-*.log` 与 `last-resume.json` 会把结果如实记下来）。
 
 复现：
 
 ```powershell
-cd C:\work\my\dsh\plugins\dsh-restart-desktop
+cd C:\work\my\dsh\plugins\dsh-plugin-restart-desktop
 npm run check        # bundle 一致性 + npm test（本次 85 项）
 npm run test:e2e     # 端到端（需要 Windows 桌面会话；多显示器那两条需要在多屏机器上跑，约 20 秒）
 ```
+
+发布时的现状：插件仍以 `link:` 方式常驻作者本机 `desktop` profile，账号行按钮这条路已经在真实窗口里用过（包括 2026-11-05 15:42 那次由按钮排程的真实重启 —— 会话被打断后按新判据恢复）。
 
 ---
 
@@ -204,10 +218,28 @@ test/fake-dom.mjs        假 DOM（客户端 DOM 注入的离线测试用）
 test/                    单元 + 冒烟 + 端到端测试
 ```
 
+## 发布（维护者）
+
+推 `v*` tag 即触发 `.github/workflows/release.yml`：先跑 `npm run check`，通过后 `npm publish`。仓库需要配置 secret `NPM_TOKEN`（npmjs.org 的 Automation token）。
+
+本地手动发也行，注意**本机 npm 默认 registry 是镜像源**，发布必须显式走官方源（`package.json` 的 `publishConfig.registry` 已经钉住，`npm publish` 会用它）：
+
+```powershell
+npm login --registry=https://registry.npmjs.org/
+npm run check
+npm publish
+```
+
+发布内容由 `files` 白名单决定：`index.js` + `lib/`（含构建好的 `lib/client.js`）+ `cordis.patch.yml` + README + LICENSE。`src/`、`build/`、`test/` 不进包 —— 所以发版前必须先 `npm run build` 并提交，`prepublishOnly` 里的 `--check` 会拦住忘提交的情形。
+
 ## 卸载
 
 ```powershell
-plugin_manager(action: "remove_bundle", target: "dsh-restart-desktop")
+plugin_manager(action: "remove_bundle", target: "dsh-plugin-restart-desktop")
 ```
 
-宿主侧状态在 `~/.dsh/restart-desktop/`，可以直接删；浏览器里只剩一个 `dsh-restart-desktop/pending-v1` 标记（重启完成后的一次性提示），一样可以直接删。
+宿主侧状态在 `~/.dsh/restart-desktop/`，可以直接删；浏览器里只剩一个 `dsh-plugin-restart-desktop/pending-v1` 标记（重启完成后的一次性提示），一样可以直接删。
+
+## 许可
+
+[MIT](LICENSE)

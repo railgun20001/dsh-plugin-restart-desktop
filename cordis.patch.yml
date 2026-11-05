@@ -1,4 +1,4 @@
-# dsh-restart-desktop —— bundle patch
+# dsh-plugin-restart-desktop —— bundle patch
 #
 # 一行同时挂起两半：
 #   - 宿主半（index.js）：重启路由 + 任务守卫 + 交接 helper + 启动后自动续接会话；
@@ -10,4 +10,4 @@
 # 这里不需要重复。
 - insert:
     - id: restart-desktop
-      name: dsh-restart-desktop
+      name: dsh-plugin-restart-desktop
